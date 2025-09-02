@@ -35,16 +35,15 @@ assignees: ''
   - Launch Microsoft Teams.
   - Go to Apps -> Managed your apps -> Upload an app -> Upload a custom app.
 
-    ![Install PM Agent Teams Bot by uploading a custom app - Step 1](https://github.com/Azure/PMAgent-onboarding/blob/main/docs/resources/Install_PM_Agent_01.png "Upload App Package")
-
+    ![Install PM Agent Teams Bot by uploading a custom app - Step 1](https://raw.githubusercontent.com/Azure/PMAgent-onboarding/main/docs/resources/Install_PM_Agent_01.png "Upload App Package")
 
   - Choose the app package and install it.
 
-    ![Install PM Agent Teams Bot by uploading a custom app - Step 2](https://github.com/Azure/PMAgent-onboarding/blob/main/docs/resources/Install_PM_Agent_02.png "Install PM Agent")
+    ![Install PM Agent Teams Bot by uploading a custom app - Step 2](https://raw.githubusercontent.com/Azure/PMAgent-onboarding/main/docs/resources/Install_PM_Agent_02.png "Install PM Agent")
 
   - Launch PM agent in Microsoft Teams. 
 
-    ![Launch PM Agent in Microsoft Teams](https://github.com/Azure/PMAgent-onboarding/blob/main/docs/resources/Launch_PM_Agent.png "Launch PM Agent")
+    ![Launch PM Agent in Microsoft Teams](https://raw.githubusercontent.com/Azure/PMAgent-onboarding/main/docs/resources/Launch_PM_Agent.png "Launch PM Agent")
 
 ## Build Product (or Domain) Knowledge
 
