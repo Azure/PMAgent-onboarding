@@ -24,4 +24,4 @@ PM Agent Dogfood mainly focus on data-driven decision-making scenario and part o
 ## How to Onboard PM Agent Dogfood? 
 
 > [!IMPORTANT]
-> Create a [GitHub issue with onboarding checklist](https://github.com/Azure/PMAgent-onboarding/issues/new?template=pm-agent-onboarding-checklist-template) to onboard your product to PM agent. 
+> Create a [GitHub issue with onboarding checklist](https://github.com/Azure/PMAgent-onboarding/issues/new?template=pm-agent-onboarding-checklist-template.md) to onboard your product to PM agent. 
