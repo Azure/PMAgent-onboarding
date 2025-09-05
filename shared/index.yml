@@ -1,0 +1,64 @@
+- name: SignalR Service
+  id: signalr_topic
+  description: "Azure SignalR Service and Azure Web PubSub Service are fully managed services for building real-time web applications. Topic contains the data format details for signalr, webpubsub and webpubsub for socketio services"
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr.md"
+  roles:
+    - signalr.admin
+- name: GitHub Copilot Extension for Microsoft 365 Agents Toolkit
+  id: github_copilot_topic
+  description: "The GitHub Copilot Extension for Microsoft 365 Agents Toolkit (a.k.a GH Copilot extension for MATK, GH Copilot extension for TTK, @m365agents, ATK extension, or ATK Copilot extension) streamlines the development of applications and agents for Microsoft 365 platform — including Microsoft Teams, Microsoft 365 Copilot, and other Microsoft 365 apps — with built-in chat capabilities"
+  tags:
+    - github copilot extension
+    - copilot
+    - gcematk
+  knowledge_path:
+    - "./data-schema-gcematk.md"
+- name: AI Toolkit for Visual Studio Code
+  id: aitk_topic
+  description: "AI Toolkit for Visual Studio Code (a.k.a. AITK, AI Toolkit) is an extension to help developers and AI engineers to easily build AI apps through developing and testing with generative AI models locally or in the cloud. AI Toolkit supports most genAI models on the market."
+  tags:
+    - ai Toolkit
+    - aitk
+  knowledge_path:
+    - "./data-schema-aitk.md"
+- name: Azure AI Foundry for Visual Studio Code
+  id: aifoundry_topic
+  description: "With the Azure AI Foundry for Visual Studio Code extension (a.k.a. AI Foundry extension) you can easily deploy Large Language Models, develop AI applications, develop with Agents, and more with Azure AI Foundry from the Visual Studio Code interface."
+  tags:
+    - Azure AI Foundry
+    - aifoundry
+  knowledge_path:
+    - "./data-schema-aifoundry.md"
+- name: GitHub Copilot app modernization for Java
+  id: github_copilot_java_topic
+  description: "GitHub Copilot app modernization for Java (a.k.a. Java migration) aims to help you migrate your Java applications to Azure with confidence and efficiency, covering assessment, code remediation and validation, powered by the intelligence of GitHub Copilot."
+  tags:
+    - GitHub Copilot modernization
+    - Java
+    - java migration
+  knowledge_path:
+    - "./data-schema-java-migration.md"
+- name: GitHub Copilot app modernization upgrade for Java
+  id: github_copilot_java_upgrade_topic
+  description: "GitHub Copilot app modernization - upgrade for Java (a.k.a. Java Upgrade) helps you upgrade your Java applications. It's an extension for Visual Studio Code which can help."
+  tags:
+    - GitHub Copilot modernization
+    - Java
+    - java upgrade
+  knowledge_path:
+    - "./data-schema-java-upgrade.md"
+- name: App Compliance Automation Tool for Microsoft 365
+  id: acat_topic
+  description: "App Compliance Automation Tool for Microsoft 365 (ACAT) is a service in Azure portal that helps simplify the compliance journey for any app that consumes Microsoft 365 customer data and is published via Partner Center. It's an application-centric compliance automation tool that helps you complete Microsoft 365 Certification with greater ease and convenience."
+  tags:
+    - App Compliance Automation Tool
+    - Microsoft 365
+    - acat
+  knowledge_path:
+    - "./data-schema-acat.md"

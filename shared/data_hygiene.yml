@@ -1,0 +1,26 @@
+name: PMAgent Data Hygiene
+version: 1.0
+description: >
+  This document defines privacy and region-based data hygiene rules 
+  to be strictly enforced when handling raw Kusto query results.
+clusters:
+  - name: "https://teamsfxaggregation.eastus.kusto.windows.net/"
+    products: ["aitk"]
+    database: "vscode-ext-aggregation"
+    tables:
+      - name: "teamfx_all"
+        pii_columns: ["VSCodeMachineId", "DevDeviceId", "VSCodeSessionId", "Properties"]
+        region_column: "GeoCountryRegionIso"
+        region_compliant_rule: "GeoCountryRegionIso not equals 'US'"
+      - name: "aitoolkit_vscode"
+        pii_columns: ["VSCodeMachineId", "VSCodeSessionId", "Properties"]
+        region_column: "GeoCountryRegionIso"
+        region_compliant_rule: "GeoCountryRegionIso not equals 'US'"
+  - name: "https://ddtelvscode.kusto.windows.net/"
+    products: ["aifoundry", "java migration", "java upgrade"]
+    database: "VSCodeExt"
+    tables:
+      - name: "RawEventsVSCodeExt"
+        pii_columns: ["VSCodeMachineId", "DevDeviceId", "VSCodeSessionId", "Properties"]
+        region_column: "GeoCountryRegionIso"
+        region_compliant_rule: "GeoCountryRegionIso not in ('US', '')"
