@@ -1,0 +1,61 @@
+name: Sync Products Schema to PMAgent
+
+on:
+  push:
+    paths:
+      - 'products/**'
+      - 'shared/index.yml'
+      - 'shared/data_hygiene.yml'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout repo PMAgent-onboarding
+      - name: Checkout Repo PMAgent-onboarding
+        uses: actions/checkout@v3
+
+      # Setup Git for repo PMAgent
+      - name: Checkout Repo PMAgent
+        uses: actions/checkout@v3
+        with:
+          repository: Azure/PMAgent
+          path: target
+          token: ${{ secrets.PMBOT_PAT }}
+
+      # Copy files
+      - name: Copy files to repo PMAgent
+        run: |
+          # products -> autogen/prompts/data_insights_ext
+          mkdir -p target/autogen/prompts/data_insights_ext
+          cp -r products/* target/autogen/prompts/data_insights_ext/
+          
+          # shared/index.yml -> autogen/prompts/data_insights_ext
+          cp shared/index.yml target/autogen/prompts/data_insights_ext/
+          
+          # shared/data_hygiene.yml -> autogen/prompts/insights_writer_agent
+          mkdir -p target/autogen/prompts/insights_writer_agent
+          cp shared/data_hygiene.yml target/autogen/prompts/insights_writer_agent/
+
+      # Commit and push changes
+      - name: Commit changes
+        run: |
+          cd target
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b sync-from-onboarding || git checkout sync-from-onboarding
+          git add .
+          git commit -m "Sync updates from onboarding repo" || echo "No changes to commit"
+          git push origin sync-from-onboarding --force
+
+      # Create PR with label
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.PMBOT_PAT }}
+          commit-message: "Sync updates from onboarding repo"
+          branch: sync-from-onboarding
+          base: main
+          title: "Sync updates from onboarding repo"
+          body: "Automated PR to sync files from onboarding repo"
+          #labels: auto-merge
