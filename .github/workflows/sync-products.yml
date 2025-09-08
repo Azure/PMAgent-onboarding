@@ -3,7 +3,7 @@ name: Sync Products Schema to PMAgent
 on:
   push:
     branches:
-      - main
+      - jixin/workflow
     paths:
       - 'products/**'
       - 'shared/index.yml'
