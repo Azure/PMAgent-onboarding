@@ -90,13 +90,15 @@ jobs:
               echo "Auto-merge enabled on existing PR #$existing_pr"
             fi
           else
-            pr_number=$(gh pr create \
+            echo "Creating new PR..."
+            pr_url=$(gh pr create \
               --title "Sync updates from onboarding repo" \
               --body "Automated PR to sync files from onboarding repo" \
               --head sync-from-onboarding \
-              --base main \
-              --json number --jq '.number')
+              --base main)
             
+            # Extract PR number from URL
+            pr_number=$(echo "$pr_url" | grep -o '[0-9]\+$')
             echo "Created PR #$pr_number"
             
             if [ "$AUTO_MERGE_ENABLED" = "true" ]; then
