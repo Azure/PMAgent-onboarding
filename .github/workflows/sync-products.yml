@@ -2,10 +2,22 @@ name: Sync Products Schema to PMAgent
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'products/**'
       - 'shared/index.yml'
       - 'shared/data_hygiene.yml'
+  workflow_dispatch:
+    inputs:
+      enable_auto_merge:
+        description: 'Enable auto-merge on created PR'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  AUTO_MERGE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.enable_auto_merge == 'true' || 'false' }}
 
 jobs:
   sync:
@@ -13,11 +25,11 @@ jobs:
     steps:
       # Checkout repo PMAgent-onboarding
       - name: Checkout Repo PMAgent-onboarding
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # Setup Git for repo PMAgent
       - name: Checkout Repo PMAgent
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: Azure/PMAgent
           path: target
@@ -28,14 +40,20 @@ jobs:
         run: |
           # products -> autogen/prompts/data_insights_ext
           mkdir -p target/autogen/prompts/data_insights_ext
-          cp -r products/* target/autogen/prompts/data_insights_ext/
+          if [ -d "products" ] && [ "$(ls -A products)" ]; then
+            cp -r products/* target/autogen/prompts/data_insights_ext/
+          fi
           
           # shared/index.yml -> autogen/prompts/data_insights_ext
-          cp shared/index.yml target/autogen/prompts/data_insights_ext/
+          if [ -f "shared/index.yml" ]; then
+            cp shared/index.yml target/autogen/prompts/data_insights_ext/
+          fi
           
           # shared/data_hygiene.yml -> autogen/prompts/insights_writer_agent
           mkdir -p target/autogen/prompts/insights_writer_agent
-          cp shared/data_hygiene.yml target/autogen/prompts/insights_writer_agent/
+          if [ -f "shared/data_hygiene.yml" ]; then
+            cp shared/data_hygiene.yml target/autogen/prompts/insights_writer_agent/
+          fi
 
       # Commit and push changes
       - name: Commit changes
@@ -43,19 +61,46 @@ jobs:
           cd target
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if there are any changes
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
           git checkout -b sync-from-onboarding || git checkout sync-from-onboarding
           git add .
-          git commit -m "Sync updates from onboarding repo" || echo "No changes to commit"
+          git commit -m "Sync updates from onboarding repo"
           git push origin sync-from-onboarding --force
 
-      # Create PR with label
+      # Create PR
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.PMBOT_PAT }}
-          commit-message: "Sync updates from onboarding repo"
-          branch: sync-from-onboarding
-          base: main
-          title: "Sync updates from onboarding repo"
-          body: "Automated PR to sync files from onboarding repo"
-          #labels: auto-merge
+        run: |
+          cd target
+          # Check if PR already exists
+          existing_pr=$(gh pr list --head sync-from-onboarding --base main --json number --jq '.[0].number')
+          if [ "$existing_pr" != "null" ] && [ -n "$existing_pr" ]; then
+            echo "PR already exists: #$existing_pr"
+            # Enable auto-merge on existing PR if flag is set
+            if [ "$AUTO_MERGE_ENABLED" = "true" ]; then
+              gh pr merge $existing_pr --auto --squash
+              echo "Auto-merge enabled on existing PR #$existing_pr"
+            fi
+          else
+            pr_number=$(gh pr create \
+              --title "Sync updates from onboarding repo" \
+              --body "Automated PR to sync files from onboarding repo" \
+              --head sync-from-onboarding \
+              --base main \
+              --json number --jq '.number')
+            
+            echo "Created PR #$pr_number"
+            
+            # Enable auto-merge if flag is set
+            if [ "$AUTO_MERGE_ENABLED" = "true" ]; then
+              gh pr merge $pr_number --auto --squash
+              echo "Auto-merge enabled on PR #$pr_number"
+            fi
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.PMBOT_PAT }}
