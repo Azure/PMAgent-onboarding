@@ -33,7 +33,7 @@ jobs:
         with:
           repository: Azure/PMAgent
           path: target
-          token: ${{ secrets.PMBOT_PAT }}
+          token: ${{ secrets.INTPR_PAT }}
 
       # Copy files
       - name: Copy files to repo PMAgent
@@ -65,6 +65,7 @@ jobs:
           # Check if there are any changes
           if [ -z "$(git status --porcelain)" ]; then
             echo "No changes to commit"
+            echo "NO_CHANGES=true" >> $GITHUB_ENV
             exit 0
           fi
           
@@ -73,34 +74,37 @@ jobs:
           git commit -m "Sync updates from onboarding repo"
           git push origin sync-from-onboarding --force
 
-      # Create PR
+      # Create PR (only if there were changes)
       - name: Create Pull Request
+        if: env.NO_CHANGES != 'true'
         run: |
           cd target
+          
           # Check if PR already exists
-          existing_pr=$(gh pr list --head sync-from-onboarding --base main --json number --jq '.[0].number')
+          existing_pr=$(gh pr list --head sync-from-onboarding --base dev --json number --jq '.[0].number' 2>/dev/null || echo "null")
+          
           if [ "$existing_pr" != "null" ] && [ -n "$existing_pr" ]; then
             echo "PR already exists: #$existing_pr"
-            # Enable auto-merge on existing PR if flag is set
             if [ "$AUTO_MERGE_ENABLED" = "true" ]; then
               gh pr merge $existing_pr --auto --squash
               echo "Auto-merge enabled on existing PR #$existing_pr"
             fi
           else
-            pr_number=$(gh pr create \
+            echo "Creating new PR..."
+            pr_url=$(gh pr create \
               --title "Sync updates from onboarding repo" \
               --body "Automated PR to sync files from onboarding repo" \
               --head sync-from-onboarding \
-              --base main \
-              --json number --jq '.number')
+              --base dev)
             
+            # Extract PR number from URL
+            pr_number=$(echo "$pr_url" | grep -o '[0-9]\+$')
             echo "Created PR #$pr_number"
             
-            # Enable auto-merge if flag is set
             if [ "$AUTO_MERGE_ENABLED" = "true" ]; then
               gh pr merge $pr_number --auto --squash
               echo "Auto-merge enabled on PR #$pr_number"
             fi
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.PMBOT_PAT }}
+          GITHUB_TOKEN: ${{ secrets.INTPR_PAT }}
