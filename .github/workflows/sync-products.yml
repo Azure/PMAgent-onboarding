@@ -65,6 +65,7 @@ jobs:
           # Check if there are any changes
           if [ -z "$(git status --porcelain)" ]; then
             echo "No changes to commit"
+            echo "NO_CHANGES=true" >> $GITHUB_ENV
             exit 0
           fi
           
@@ -73,12 +74,29 @@ jobs:
           git commit -m "Sync updates from onboarding repo"
           git push origin sync-from-onboarding --force
 
-      # Create PR
+      # Create PR (only if there were changes)
       - name: Create Pull Request
+        if: env.NO_CHANGES != 'true'
         run: |
           cd target
+          
+          # Authenticate GitHub CLI with the PAT token
+          echo "$GITHUB_TOKEN" | gh auth login --with-token
+          
+          # Verify we can access the repository
+          echo "Verifying repository access..."
+          if ! gh repo view --json name > /dev/null 2>&1; then
+            echo "Error: Cannot access repository. Check if:"
+            echo "1. PMBOT_PAT token has 'repo' scope for private repositories"
+            echo "2. Token has access to Azure/PMAgent repository"
+            echo "3. Token is not expired"
+            exit 1
+          fi
+          
           # Check if PR already exists
-          existing_pr=$(gh pr list --head sync-from-onboarding --base main --json number --jq '.[0].number')
+          echo "Checking for existing PR..."
+          existing_pr=$(gh pr list --head sync-from-onboarding --base main --json number --jq '.[0].number' 2>/dev/null || echo "null")
+          
           if [ "$existing_pr" != "null" ] && [ -n "$existing_pr" ]; then
             echo "PR already exists: #$existing_pr"
             # Enable auto-merge on existing PR if flag is set
@@ -87,6 +105,7 @@ jobs:
               echo "Auto-merge enabled on existing PR #$existing_pr"
             fi
           else
+            echo "Creating new PR..."
             pr_number=$(gh pr create \
               --title "Sync updates from onboarding repo" \
               --body "Automated PR to sync files from onboarding repo" \
