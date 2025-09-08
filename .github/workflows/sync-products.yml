@@ -27,6 +27,25 @@ jobs:
       - name: Checkout Repo PMAgent-onboarding
         uses: actions/checkout@v4
 
+      # Debug PAT token
+      - name: Debug PAT token
+        run: |
+          echo "Checking PAT token format..."
+          if [ -z "${{ secrets.PMBOT_PAT }}" ]; then
+            echo "ERROR: PMBOT_PAT secret is empty or not set"
+            exit 1
+          fi
+          
+          # Check token format (should start with ghp_ for personal access tokens)
+          token_prefix=$(echo "${{ secrets.PMBOT_PAT }}" | cut -c1-4)
+          echo "Token prefix: $token_prefix"
+          
+          # Test GitHub API access with the token
+          echo "Testing GitHub API access..."
+          curl -s -H "Authorization: token ${{ secrets.PMBOT_PAT }}" \
+            https://api.github.com/repos/Azure/PMAgent \
+            | jq -r '.name // .message // "No response"'
+
       # Setup Git for repo PMAgent
       - name: Checkout Repo PMAgent
         uses: actions/checkout@v4
@@ -34,6 +53,13 @@ jobs:
           repository: Azure/PMAgent
           path: target
           token: ${{ secrets.PMBOT_PAT }}
+          
+      # Alternative: Manual clone if checkout fails
+      - name: Manual clone (fallback)
+        if: failure()
+        run: |
+          echo "Checkout action failed, trying manual clone..."
+          git clone https://${{ secrets.PMBOT_PAT }}@github.com/Azure/PMAgent.git target
 
       # Copy files
       - name: Copy files to repo PMAgent
