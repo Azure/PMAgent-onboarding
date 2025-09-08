@@ -1,7 +1,7 @@
 ---
 name: PM Agent Onboarding Checklist Template
 about: Template of PM agent onboarding checklist
-title: "[Product Onboarding] "
+title: "Product Onboarding Checklist: <Offical Product Name> "
 labels: 'onboarding'
 assignees: ''
 
@@ -49,14 +49,14 @@ assignees: ''
 
 - [ ] Prepare your existing quries as reference to build product knowledge 
 
-  - Option #1: Download Azure Data Explore dashboard as json file. 
+  - Option 1: Download Azure Data Explore dashboard as json file. 
 
     - Go to dashboard in Azure Data Explorer. 
     - Click `File` and then choose `Download dashboard to file` to download the dashboard as json file.
 
     ![Download ADE dashboard](https://raw.githubusercontent.com/Azure/PMAgent-onboarding/main/docs/resources/Download_ADE_Dashboard.png "Download Azure Data Explore Dashboard")
 
-  - Option #2: Download queries from Power BI dashboard.
+  - Option 2: Download queries from Power BI dashboard.
 
     - Go to the Power BI dashboard online.
     - Click `File` and then choose `Download this file`. 
@@ -66,7 +66,7 @@ assignees: ''
     - Select all queries in the `Queries` pane and `Ctrl+C` to copy them. 
     - Paste the queries with comment in a markdown file.
 
-  - Option #3: Download documentation from product wiki as markdown file.
+  - Option 3: Download documentation from product wiki as markdown file.
 
 - [ ] Create a [GitHub issue](https://github.com/Azure/PMAgent-onboarding/issues/new?template=pm-agent-queries-template.md) to upload the resources you prepared, and copy the URL of this issue. 
 
