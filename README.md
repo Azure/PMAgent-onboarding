@@ -25,3 +25,14 @@ PM Agent Dogfood mainly focus on data-driven decision-making scenario and part o
 
 > [!IMPORTANT]
 > Create a [GitHub issue with onboarding checklist](https://github.com/Azure/PMAgent-onboarding/issues/new?template=pm-agent-onboarding-checklist-template.md) to onboard your product to PM agent. 
+
+
+## How to report an issue or bug? 
+
+> [!IMPORTANT]
+> Create a [GitHub issue with details](https://github.com/Azure/PMAgent-onboarding/issues/new?template=pm-agent-bug-report-template.md) to report an issue of PM agent. 
+
+## How to request new feature? 
+
+> [!IMPORTANT]
+> Create a [GitHub issue of feature request](https://github.com/Azure/PMAgent-onboarding/issues/new?template=pm-agent-feature-request-template.md) to submit what you need. 
