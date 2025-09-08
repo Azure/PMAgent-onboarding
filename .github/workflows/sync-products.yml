@@ -81,7 +81,7 @@ jobs:
           cd target
           
           # Check if PR already exists
-          existing_pr=$(gh pr list --head sync-from-onboarding --base main --json number --jq '.[0].number' 2>/dev/null || echo "null")
+          existing_pr=$(gh pr list --head sync-from-onboarding --base dev --json number --jq '.[0].number' 2>/dev/null || echo "null")
           
           if [ "$existing_pr" != "null" ] && [ -n "$existing_pr" ]; then
             echo "PR already exists: #$existing_pr"
@@ -95,7 +95,7 @@ jobs:
               --title "Sync updates from onboarding repo" \
               --body "Automated PR to sync files from onboarding repo" \
               --head sync-from-onboarding \
-              --base main)
+              --base dev)
             
             # Extract PR number from URL
             pr_number=$(echo "$pr_url" | grep -o '[0-9]\+$')
