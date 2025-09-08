@@ -31,18 +31,18 @@ jobs:
       - name: Debug PAT token
         run: |
           echo "Checking PAT token format..."
-          if [ -z "${{ secrets.PMBOT_PAT }}" ]; then
-            echo "ERROR: PMBOT_PAT secret is empty or not set"
+          if [ -z "${{ secrets.INTPR_PAT }}" ]; then
+            echo "ERROR: INTPR_PAT secret is empty or not set"
             exit 1
           fi
           
           # Check token format (should start with ghp_ for personal access tokens)
-          token_prefix=$(echo "${{ secrets.PMBOT_PAT }}" | cut -c1-4)
+          token_prefix=$(echo "${{ secrets.INTPR_PAT }}" | cut -c1-4)
           echo "Token prefix: $token_prefix"
           
           # Test GitHub API access with the token
           echo "Testing GitHub API access..."
-          curl -s -H "Authorization: token ${{ secrets.PMBOT_PAT }}" \
+          curl -s -H "Authorization: token ${{ secrets.INTPR_PAT }}" \
             https://api.github.com/repos/Azure/PMAgent \
             | jq -r '.name // .message // "No response"'
 
@@ -52,14 +52,14 @@ jobs:
         with:
           repository: Azure/PMAgent
           path: target
-          token: ${{ secrets.PMBOT_PAT }}
+          token: ${{ secrets.INTPR_PAT }}
           
       # Alternative: Manual clone if checkout fails
       - name: Manual clone (fallback)
         if: failure()
         run: |
           echo "Checkout action failed, trying manual clone..."
-          git clone https://${{ secrets.PMBOT_PAT }}@github.com/Azure/PMAgent.git target
+          git clone https://${{ secrets.INTPR_PAT }}@github.com/Azure/PMAgent.git target
 
       # Copy files
       - name: Copy files to repo PMAgent
@@ -113,7 +113,7 @@ jobs:
           echo "Verifying repository access..."
           if ! gh repo view --json name > /dev/null 2>&1; then
             echo "Error: Cannot access repository. Check if:"
-            echo "1. PMBOT_PAT token has 'repo' scope for private repositories"
+            echo "1. INTPR_PAT token has 'repo' scope for private repositories"
             echo "2. Token has access to Azure/PMAgent repository"
             echo "3. Token is not expired"
             exit 1
@@ -148,4 +148,4 @@ jobs:
             fi
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.PMBOT_PAT }}
+          GITHUB_TOKEN: ${{ secrets.INTPR_PAT }}
