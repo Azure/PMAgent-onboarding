@@ -1,6 +1,6 @@
 ---
-name: Prdouct Knowledge Resources Template
-about: Template of product specific resources which are used by PM agent to product knowledge
+name: Prdouct Knowledge Resources
+about: Describe the product resources to build knowledge base with PM agent
 title: "Onboard Product: <Offical Product Name>"
 labels: 'onboarding'
 assignees: ''

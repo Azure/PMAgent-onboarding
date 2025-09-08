@@ -1,6 +1,6 @@
 ---
-name: PM Agent Onboarding Checklist Template
-about: Template of PM agent onboarding checklist
+name: PM Agent Onboarding Checklist
+about: Create a checklist to onboard PM agent
 title: "Product Onboarding Checklist: <Offical Product Name> "
 labels: 'onboarding'
 assignees: ''
