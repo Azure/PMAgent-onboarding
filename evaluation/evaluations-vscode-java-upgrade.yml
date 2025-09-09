@@ -1,0 +1,159 @@
+- name: Upgrade Funnel - Overview by Unique User
+  difficulty: hard
+  question: Give a breakdown of the upgrade process funnel by unique user and session,
+    reporting number and percentage of users and sessions at each major event step
+    in the VSCode Java upgrade flow.
+  intent: Exploratory
+  kusto:
+  - name: funnel_breakdown
+    query: "let eventOrder = dynamic([\n    \"vscjava.vscode-java-upgrade/generateplan.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/generateplan.start\",\n    \"vscjava.vscode-java-upgrade/generateplan.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/confirmplan.prepare\",\n    \"vscjava.vscode-java-upgrade/confirmplan.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/confirmplan.end\",\n    \"vscjava.vscode-java-upgrade/openrewrite.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/openrewrite.start\",\n    \"vscjava.vscode-java-upgrade/openrewrite.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/buildfix.prepare\",\n    \"vscjava.vscode-java-upgrade/buildfix.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/buildfix.end\",\n    \"vscjava.vscode-java-upgrade/validatecves.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecves.start\",\n    \"vscjava.vscode-java-upgrade/validatecves.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end\",\n\
+      \    \"vscjava.vscode-java-upgrade/summarizechanges.start\",\n    \"vscjava.vscode-java-upgrade/summarizechanges.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/summarizechanges.end\"\n]); let noSessionEvents\
+      \ = dynamic([\"vscjava.vscode-java-upgrade/generateplan.start\", \"vscjava.vscode-java-upgrade/generateplan.prepare\"\
+      , \"vscjava.vscode-java-upgrade/generateplan.end\"]); /* ... rest of provided\
+      \ query ... */"
+  scoringRules:
+  - name: Breakdown by both session and user
+    rule: The funnel breakdown must include both session and user count and percentage
+      at each event step.
+    score: 3.0
+  - name: Event ordering
+    rule: Returned steps should be ordered according to the upgrade process eventOrder.
+    score: 1.0
+  - name: Correct session percentage for non-session events
+    rule: For steps where session is not applicable (noSessionEvents), sessionPercentage
+      must be shown as N/A.
+    score: 1.0
+  - name: Handles time, version, and user type filters
+    rule: The output must filter by correct time window, extension version, and user
+      type, as the query logic.
+    score: 1.0
+- name: Build Tool Success Rate Distribution
+  difficulty: medium
+  question: Show migration success rates split by build tool (e.g., Maven, Gradle,
+    unknown) including total and succeeded sessions and users, and calculated success
+    rate percentage.
+  intent: Inquisitory
+  kusto:
+  - name: buildtool_distribution
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade" /* ... provided query
+      ... */'
+  scoringRules:
+  - name: Include success rates and counts per tool
+    rule: Returned data must include total/succeeded session and user counts, and
+      a computed success rate (%) per buildTool.
+    score: 2.0
+  - name: Filter by confirmplan.end
+    rule: All event counts must be filtered for sessions confirmed with confirmplan.end.
+    score: 1.0
+  - name: Correct result calculation
+    rule: The result must treat BuildFix and OpenRewrite failed states separately
+      from succeeded and incomplete.
+    score: 2.0
+- name: Migration Distribution Success by Java Version
+  difficulty: medium
+  question: Give a distribution of migration success rates split by source and target
+    Java versions, including total and succeeded session and user counts and calculated
+    success rate percentage.
+  intent: Inquisitory
+  kusto:
+  - name: migration_distribution
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade" /* ... provided query
+      ... */'
+  scoringRules:
+  - name: Success breakdown by versions
+    rule: Returned data must include sourceVersion, targetVersion, succeeded/total
+      session and user counts, and success rate percentage.
+    score: 2.0
+  - name: Correct session filtering
+    rule: Success is determined solely from buildfix.end result value in confirmplan.end
+      sessions.
+    score: 2.0
+  - name: Treat incomplete and failed separately
+    rule: Return must distinguish between Succeeded, BuildFixFailed, OpenRewriteFailed,
+      and Incomplete.
+    score: 2.0
+- name: Upgrade Result Breakdown by Version
+  difficulty: medium
+  question: 'For each VSCode Java Upgrade extension version, report upgrade result
+    state counts and percentages: Succeeded, BuildFixFailed, OpenRewriteFailed, Incomplete.'
+  intent: Inquisitory
+  kusto:
+  - name: upgrade_result_by_version
+    query: 'let all = raw
+
+      | where EventName == "vscjava.vscode-java-upgrade/confirmplan.end"
+
+      | distinct VSCodeMachineId, startTime = ServerTimestamp, sessionId, majorVersion,
+      minorVersion; /* ... provided query ... */'
+  scoringRules:
+  - name: Include all upgrade states per version
+    rule: Returned data must report upgrade state counts and percentages for each
+      extension version (e.g., 1.10, 2.12).
+    score: 2.0
+  - name: Calculation accuracy for percentages
+    rule: Percentages should be calculated based on stateCount/all per version.
+    score: 2.0
+  - name: Consistent event and result mapping
+    rule: State assignment must match query logic (Succeeded, BuildFixFailed, OpenRewriteFailed,
+      Incomplete from event context).
+    score: 1.0
+- name: Token Usage Per Step Distribution
+  difficulty: medium
+  question: Show percentile distribution (median, p75, p90, p95, max) of total LLM
+    token usage per extension tool step.
+  intent: Inquisitory
+  kusto:
+  - name: token_usage_per_step
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade" /* ... provided query
+      ... */'
+  scoringRules:
+  - name: Percentile statistics per step
+    rule: Returned distribution must include token percentiles (50/median, 75, 90,
+      95, max) per caller.
+    score: 2.0
+  - name: Grouping by extension tool caller
+    rule: Breakdown must be grouped by 'caller' field representing the extension tool
+      invoked.
+    score: 2.0
+  - name: Include only valid tool calls
+    rule: Only llmclient.sendrequest events and valid session/caller should be considered.
+    score: 1.0
+- name: Build Fix Result Pie Chart
+  difficulty: easy
+  question: 'Give pie chart breakdown of sessions by build fix status: Not Started,
+    Not Complete/Error, Succeeded, Failed.'
+  intent: Inquisitory
+  kusto:
+  - name: buildfix_result_pie
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade" /* ... provided query
+      ... */'
+  scoringRules:
+  - name: Pie chart breakdown
+    rule: Result must include session distribution by build fix result state.
+    score: 2.0
+  - name: State mapping accuracy
+    rule: Result must map states as Not Start, Not Complete/Error, Succeeded (result==true),
+      Failure (result!=true).
+    score: 2.0
+  - name: Visualization format
+    rule: Use pie chart or appropriate visualization for clarity.
+    score: 1.0
