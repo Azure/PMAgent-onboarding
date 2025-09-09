@@ -1,0 +1,141 @@
+- name: Upgrade Funnel Overview by Unique User
+  difficulty: medium
+  question: Show the Java upgrade funnel across all major events, reporting the session
+    and user count and percentage for each step in VSCode's Java upgrade workflow.
+  intent: Exploratory
+  kusto:
+  - name: Upgrade Funnel Query
+    query: let eventOrder = dynamic([ ... ]); /* as in raw query */ ... | project
+      EventName, sessionCount, sessionPercentage, userCount, userPercentage, orderIndex
+      | where orderIndex >= 0 | order by orderIndex asc
+  scoringRules:
+  - name: Funnel steps covered
+    rule: The response must include each step in the upgrade funnel as specified in
+      eventOrder, ordered correctly, skipping steps not present in the eventOrder.
+    score: 2.0
+  - name: User and session calculation
+    rule: For each step, the query must present both unique session and user count,
+      and their percentages relative to the total.
+    score: 2.0
+  - name: Percentage logic correctness
+    rule: Session percentages in steps with 'noSessionEvents' should be assigned "N/A",
+      others calculated accurately; user percentages must always be present.
+    score: 1.0
+  - name: Proper filtering
+    rule: The query must filter out mock sessions and restrict to proper extension
+      versions and internal/external users as the filters specify.
+    score: 1.0
+- name: Build Tool Usage Success Rate Distribution
+  difficulty: medium
+  question: "For upgrade sessions ending in 'confirmplan.end', display success rates\
+    \ of build tools used\u2014break out succeeded and total sessions and users for\
+    \ each tool."
+  intent: Inquisitory
+  kusto:
+  - name: Build Tool Distribution Query
+    query: let base = ... | let raw = ... | ... | join result on sessionId | summarize
+      totalSession = dcount(sessionId), succeededSession = dcountif(sessionId, result
+      == "Succeeded"), totalUser = dcount(VSCodeMachineId), succeededUser = dcountif(VSCodeMachineId,
+      result == "Succeeded") by buildTool | project buildTool, succeededSession, totalSession,
+      ["succeedRate (%)"] = round(succeededSession * 1.0 / totalSession, 4) * 100
+  scoringRules:
+  - name: Breakdown by build tool
+    rule: Results must be grouped by buildTool as captured in session properties at
+      confirmplan.end.
+    score: 1.0
+  - name: Session and user success rate
+    rule: Include both succeeded/total session counts and succeeded/total user counts,
+      and report percentage succeed rates.
+    score: 2.0
+  - name: Join logic
+    rule: Correct joining must ensure build rewrite and fix failures are accounted
+      and that incomplete sessions are handled.
+    score: 1.0
+- name: Migration Source and Target Java Version Distribution
+  difficulty: medium
+  question: "What is the distribution of migration sessions by source and target Java\
+    \ versions\u2014report succeeded/total sessions, success rate for each upgrade\
+    \ version pair."
+  intent: Inquisitory
+  kusto:
+  - name: Migration Distribution Query
+    query: let base = ... | let raw = ... | ... | join result on sessionId | summarize
+      totalSession = dcount(sessionId), succeededSession = dcountif(sessionId, result
+      == "Succeeded"), totalUser = dcount(VSCodeMachineId), succeededUser = dcountif(VSCodeMachineId,
+      result == "Succeeded") by sourceVersion, targetVersion | project sourceVersion,
+      targetVersion, succeededSession, totalSession, ["succeedRate (%)"] = round(succeededSession
+      * 1.0 / totalSession, 4) * 100
+  scoringRules:
+  - name: Source and target version breakdown
+    rule: Results must be reported per sourceVersion/targetVersion, pulling version
+      data from plan confirmation properties.
+    score: 1.0
+  - name: Success and session counts
+    rule: For each migration pair, both succeeded session count and total session
+      count must be displayed, with success percentage.
+    score: 2.0
+  - name: Correct session/user mapping
+    rule: Sessions/users are joined with post-fix and rewrite outcomes, mapping sessionId
+      correctly to result.
+    score: 1.0
+- name: 'Overview: Total Distinct Users of VSCode Java Upgrade'
+  difficulty: easy
+  question: How many distinct users ran the Java upgrade extension within the selected
+    time range?
+  intent: Inquisitory
+  kusto:
+  - name: Distinct User Count Query
+    query: let base = ... | let raw = ... | raw | summarize dcount(DevDeviceId) |
+      render card
+  scoringRules:
+  - name: Count users
+    rule: The query must count unique DevDeviceId after applying version, session,
+      and user-type filtering.
+    score: 2.0
+- name: 'Error Status: Top 50 Error Messages by Affected Sessions'
+  difficulty: medium
+  question: List the top 50 error messages in Java upgrade sessions, showing the number
+    of unique sessions impacted by each error.
+  intent: Diagnostic
+  kusto:
+  - name: Top Errors Query
+    query: let base = ... | let raw = ... | raw | extend eventType = ... | where eventType
+      == "error" | extend errorMessage = ... | summarize dcount(VSCodeSessionId) by
+      errorMessage | top 50 by dcount_VSCodeSessionId
+  scoringRules:
+  - name: Main error reporting
+    rule: The response must include up to 50 unique errorMessage entries, ranked by
+      session impact.
+    score: 2.0
+  - name: Session deduplication
+    rule: Errors are aggregated by dcount(VSCodeSessionId), not simple counts.
+    score: 1.0
+  - name: Error extraction
+    rule: Ensure errorMessage is extracted and not empty for valid output entries.
+    score: 1.0
+- name: Upgrade Result Breakdown by Extension Version
+  difficulty: medium
+  question: 'Summarize upgrade session results grouped by extension version (major.minor):
+    Succeeded, BuildFixFailed, OpenResultFailed, Incomplete, reporting percentage
+    and count per version.'
+  intent: Inquisitory
+  kusto:
+  - name: Upgrade Result by Version Query
+    query: let all = ... | let openRewriteFailedResults = ... | let buildFixResult
+      = ... | let result = ... | let toal = result | summarize all = dcount(sessionId)
+      by majorVersion, minorVersion; result | summarize stateCount = dcount(sessionId)
+      by result, majorVersion, minorVersion | join kind=inner toal on majorVersion,
+      minorVersion | ... | summarize Succeeded, BuildFixFailed, OpenResultFailed,
+      INCOMPLETE, TotalSession by Version
+  scoringRules:
+  - name: Breakdown per extension version
+    rule: 'Results must be separately listed for each version (major.minor) as Version,
+      and include all four states: Succeeded, BuildFixFailed, OpenResultFailed, INCOMPLETE.'
+    score: 2.0
+  - name: Show count and percent per state
+    rule: Return Times and Percentage fields for each result state and version.
+    score: 2.0
+  - name: Correct session aggregation
+    rule: State breakdown must use dcount(sessionId), summing/percentaging against
+      total sessions for the version.
+    score: 1.0
