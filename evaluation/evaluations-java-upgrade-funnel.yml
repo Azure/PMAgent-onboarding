@@ -1,0 +1,139 @@
+- name: Java Upgrade - Overview Funnel by User/Session
+  difficulty: hard
+  question: Show the Java upgrade funnel steps for the VSCode Java Upgrade extension
+    by unique user and session, including session and user percentages per step.
+  intent: Exploratory
+  kusto:
+  - name: funnel_overview
+    query: "let eventOrder = dynamic([\n    \"vscjava.vscode-java-upgrade/generateplan.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/generateplan.start\",\n    \"vscjava.vscode-java-upgrade/generateplan.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/confirmplan.prepare\",\n    \"vscjava.vscode-java-upgrade/confirmplan.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/confirmplan.end\",\n    \"vscjava.vscode-java-upgrade/openrewrite.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/openrewrite.start\",\n    \"vscjava.vscode-java-upgrade/openrewrite.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/buildfix.prepare\",\n    \"vscjava.vscode-java-upgrade/buildfix.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/buildfix.end\",\n    \"vscjava.vscode-java-upgrade/validatecves.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecves.start\",\n    \"vscjava.vscode-java-upgrade/validatecves.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end\",\n\
+      \    \"vscjava.vscode-java-upgrade/summarizechanges.start\",\n    \"vscjava.vscode-java-upgrade/summarizechanges.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/summarizechanges.end\"\n]);\nlet noSessionEvents\
+      \ = dynamic([\"vscjava.vscode-java-upgrade/generateplan.start\", \"vscjava.vscode-java-upgrade/generateplan.prepare\"\
+      , \"vscjava.vscode-java-upgrade/generateplan.end\"]);\nlet base = database(\"\
+      VSCodeExt\").RawEventsVSCodeExt ... [TRUNCATED]\n"
+  scoringRules:
+  - name: Accurate step funnel
+    rule: All major funnel steps (plan generation, confirmation, openrewrite, buildfix,
+      CVE validation, consistency validation, summarize) must be shown, in the intended
+      order.
+    score: 2.0
+  - name: Both user and session counts
+    rule: For each step, report both unique user and unique session counts.
+    score: 2.0
+  - name: Show session/user percent
+    rule: Percentages for users/sessions reaching each step must be calculated and
+      shown per step.
+    score: 2.0
+  - name: Correct filters
+    rule: Only non-mock sessions, valid extension versions (major > 0 or minor >=
+      10), and filtered for internal/external users as needed.
+    score: 1.0
+  - name: Order of steps
+    rule: Steps must be arranged using eventOrder, and only steps from eventOrder
+      should appear.
+    score: 1.0
+- name: Java Upgrade - Build Tool Distribution Success Rate
+  difficulty: medium
+  question: Show build tool session distribution per build tool and success rate for
+    the confirmplan stage in VSCode Java Upgrade extension.
+  intent: Inquisitory
+  kusto:
+  - name: build_tool_distribution
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade"
+
+      ... [TRUNCATED]
+
+      '
+  scoringRules:
+  - name: Show build tool success rate
+    rule: For each build tool, show total sessions, succeeded session count, and success
+      rate percentage.
+    score: 2.0
+  - name: Correct session identification
+    rule: SessionId must be used for grouping session data and calculating rates.
+    score: 1.0
+  - name: Correct join logic
+    rule: The join logic for buildfix and openrewrite errors to classify 'Succeeded',
+      'BuildFixFailed', 'OpenResultFailed', or 'Incomplete' is required as per query
+      logic.
+    score: 1.0
+- name: Java Upgrade - Migration Distribution by Java Version
+  difficulty: medium
+  question: Show session distribution and success rate of migrations for each source/target
+    Java version in VSCode Java Upgrade confirmplan stage.
+  intent: Inquisitory
+  kusto:
+  - name: migration_distribution
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade"
+
+      ... [TRUNCATED]
+
+      '
+  scoringRules:
+  - name: Show migration distribution
+    rule: For each sourceVersion/targetVersion combination, show total sessions, succeeded
+      sessions, and success rate.
+    score: 2.0
+  - name: Correct session identification
+    rule: SessionId must be used for grouping session data and calculating rates.
+    score: 1.0
+  - name: Correct join logic for failure states
+    rule: The join logic for buildfix and openrewrite errors to classify 'Succeeded',
+      'BuildFixFailed', 'OpenResultFailed', or 'Incomplete' is required as per query
+      logic.
+    score: 1.0
+- name: Java Upgrade - Total Users
+  difficulty: easy
+  question: Show the total number of unique DevDeviceId users who used VSCode Java
+    Upgrade extension in the selected range.
+  intent: Inquisitory
+  kusto:
+  - name: total_users
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade"
+
+      ... [TRUNCATED]
+
+      '
+  scoringRules:
+  - name: Correct user counting
+    rule: Ensure the result is a count of unique DevDeviceIds.
+    score: 2.0
+  - name: Correct time/range filtering
+    rule: Time range filtering and other filters (mock session, extension version)
+      must be present.
+    score: 1.0
+- name: Java Upgrade - Create Plan Users
+  difficulty: easy
+  question: Count unique users who triggered the 'generateplan.start' event in VSCode
+    Java Upgrade.
+  intent: Inquisitory
+  kusto:
+  - name: create_plan_users
+    query: 'let base = database("VSCodeExt").RawEventsVSCodeExt
+
+      | where ExtensionName == "vscjava.vscode-java-upgrade"
+
+      ... [TRUNCATED]
+
+      '
+  scoringRules:
+  - name: Create plan event user count
+    rule: Result must be a count of unique DevDeviceIds who triggered the 'generateplan.start'
+      event.
+    score: 2.0
