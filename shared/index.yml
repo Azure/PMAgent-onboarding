@@ -62,3 +62,13 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: Test
+  id: test_topic
+  description: "Test product for onboarding demonstration. Covers SignalR and WebPubSub analytics, reliability, retention, revenue, and feature tracking."
+  tags:
+    - test
+    - signalr
+    - webpubsub
+    - analytics
+  knowledge_path:
+    - "./data-schema-test.md"
