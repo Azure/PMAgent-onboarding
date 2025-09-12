@@ -8,6 +8,7 @@ on:
       - 'products/**'
       - 'shared/index.yml'
       - 'shared/data_hygiene.yml'
+      - 'evaluation/**'
   workflow_dispatch:
     inputs:
       enable_auto_merge:
@@ -27,7 +28,7 @@ jobs:
       - name: Checkout Repo PMAgent-onboarding
         uses: actions/checkout@v4
 
-      # Setup Git for repo PMAgent
+      # Checkout target repo PMAgent
       - name: Checkout Repo PMAgent
         uses: actions/checkout@v4
         with:
@@ -35,24 +36,31 @@ jobs:
           path: target
           token: ${{ secrets.INTPR_PAT }}
 
-      # Copy files
+      # Copy files (overwrite changed, remove deleted)
       - name: Copy files to repo PMAgent
         run: |
+          set -euo pipefail
+
           # products -> autogen/prompts/data_insights_ext
           mkdir -p target/autogen/prompts/data_insights_ext
           if [ -d "products" ] && [ "$(ls -A products)" ]; then
-            cp -r products/* target/autogen/prompts/data_insights_ext/
+            rsync -a --delete products/ target/autogen/prompts/data_insights_ext/
           fi
           
           # shared/index.yml -> autogen/prompts/data_insights_ext
           if [ -f "shared/index.yml" ]; then
-            cp shared/index.yml target/autogen/prompts/data_insights_ext/
+            rsync -a shared/index.yml target/autogen/prompts/data_insights_ext/
           fi
           
           # shared/data_hygiene.yml -> autogen/prompts/insights_writer_agent
           mkdir -p target/autogen/prompts/insights_writer_agent
           if [ -f "shared/data_hygiene.yml" ]; then
-            cp shared/data_hygiene.yml target/autogen/prompts/insights_writer_agent/
+            rsync -a shared/data_hygiene.yml target/autogen/prompts/insights_writer_agent/
+          fi
+
+          # evaluation -> target/evaluation
+          if [ -d "evaluation" ] && [ "$(ls -A evaluation)" ]; then
+            rsync -a --delete evaluation/ target/evaluation/
           fi
 
       # Commit and push changes
@@ -61,32 +69,33 @@ jobs:
           cd target
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Check if there are any changes
+
           if [ -z "$(git status --porcelain)" ]; then
             echo "No changes to commit"
             echo "NO_CHANGES=true" >> $GITHUB_ENV
             exit 0
           fi
-          
-          git checkout -b sync-from-onboarding || git checkout sync-from-onboarding
+
+          git fetch origin
+          git checkout -B sync-from-onboarding
           git add .
           git commit -m "Sync updates from onboarding repo"
-          git push origin sync-from-onboarding --force
+          git push origin sync-from-onboarding --force-with-lease
 
       # Create PR (only if there were changes)
       - name: Create Pull Request
         if: env.NO_CHANGES != 'true'
         run: |
           cd target
-          
+          gh auth status || gh auth login --with-token <<< "${GITHUB_TOKEN}"
+
           # Check if PR already exists
           existing_pr=$(gh pr list --head sync-from-onboarding --base dev --json number --jq '.[0].number' 2>/dev/null || echo "null")
           
           if [ "$existing_pr" != "null" ] && [ -n "$existing_pr" ]; then
             echo "PR already exists: #$existing_pr"
-            if [ "$AUTO_MERGE_ENABLED" = "true" ]; then
-              gh pr merge $existing_pr --auto --squash
+            if [ "$AUTO_MERGE_ENABLED" = "true" ] ; then
+              gh pr merge "$existing_pr" --auto --squash
               echo "Auto-merge enabled on existing PR #$existing_pr"
             fi
           else
@@ -96,13 +105,11 @@ jobs:
               --body "Automated PR to sync files from onboarding repo" \
               --head sync-from-onboarding \
               --base dev)
-            
-            # Extract PR number from URL
-            pr_number=$(echo "$pr_url" | grep -o '[0-9]\+$')
-            echo "Created PR #$pr_number"
-            
-            if [ "$AUTO_MERGE_ENABLED" = "true" ]; then
-              gh pr merge $pr_number --auto --squash
+            pr_number=$(echo "$pr_url" | grep -o '[0-9]\+$' || true)
+            echo "Created PR ${pr_number:+#$pr_number}"
+
+            if [ "$AUTO_MERGE_ENABLED" = "true" ] && [ -n "${pr_number}" ]; then
+              gh pr merge "$pr_number" --auto --squash
               echo "Auto-merge enabled on PR #$pr_number"
             fi
           fi
