@@ -1,0 +1,158 @@
+- name: Upgrade Funnel by Unique Users
+  difficulty: hard
+  question: Provide a detailed analysis of the upgrade funnel in the VSCode Java Upgrade
+    extension based on unique users. Indicate user and session percentage for each
+    upgrade step in order.
+  intent: Exploratory
+  kusto:
+    funnel: "let eventOrder = dynamic([\n    \"vscjava.vscode-java-upgrade/generateplan.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/generateplan.start\",\n    \"vscjava.vscode-java-upgrade/generateplan.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/confirmplan.prepare\",\n    \"vscjava.vscode-java-upgrade/confirmplan.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/confirmplan.end\",\n    \"vscjava.vscode-java-upgrade/openrewrite.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/openrewrite.start\",\n    \"vscjava.vscode-java-upgrade/openrewrite.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/buildfix.prepare\",\n    \"vscjava.vscode-java-upgrade/buildfix.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/buildfix.end\",\n    \"vscjava.vscode-java-upgrade/validatecves.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecves.start\",\n    \"vscjava.vscode-java-upgrade/validatecves.end\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.start\"\
+      ,\n    \"vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end\",\n\
+      \    \"vscjava.vscode-java-upgrade/summarizechanges.start\",\n    \"vscjava.vscode-java-upgrade/summarizechanges.prepare\"\
+      ,\n    \"vscjava.vscode-java-upgrade/summarizechanges.end\"\n]);\nlet noSessionEvents\
+      \ = dynamic([\"vscjava.vscode-java-upgrade/generateplan.start\", \"vscjava.vscode-java-upgrade/generateplan.prepare\"\
+      , \"vscjava.vscode-java-upgrade/generateplan.end\"]);\nlet base = database(\"\
+      VSCodeExt\").RawEventsVSCodeExt\n| where ExtensionName == \"vscjava.vscode-java-upgrade\"\
+      \n| where tostring(Properties[\"sessionid\"]) != \"MOCKSESSION\"\n| where ServerTimestamp\
+      \  between (['<_startTime>'] .. ['<_endTime>'])\n| extend majorVersion = toint(split(ExtensionVersion,\
+      \ \".\", 0)[0]), minorVersion = toint(split(ExtensionVersion, \".\", 1)[0])\n\
+      | where majorVersion > 0 or minorVersion >=10\n| join kind=inner (database(\"\
+      VSCodeInsights\").fact_user_isinternal) on DevDeviceId;\nlet raw = base\n| where\
+      \ isempty(['<_versions>']) or ExtensionVersion in (['<_versions>'])\n| where\
+      \ isempty( ['<_user_types>']) or IsInternal in ( ['<_user_types>'])\n| extend\
+      \ sessionId = tostring(Properties[\"sessionid\"]);\nlet operations = raw\n|\
+      \ extend session = tostring(Properties[\"sessionid\"])\n| where EventName in\
+      \ (eventOrder);\nlet totalUser = toscalar(operations | summarize dcount(VSCodeMachineId));\n\
+      let totalSession = toscalar(operations | summarize dcount(session));\noperations\n\
+      | summarize sessionCount = dcount(session), userCount = dcount(VSCodeMachineId)\
+      \ by EventName\n| extend orderIndex = array_index_of(eventOrder, EventName)\n\
+      | project EventName,\n    sessionPercentage = iff(EventName in (noSessionEvents),\
+      \ 100.0, round(todouble(sessionCount) / totalSession * 100.0, 2)), \n    sessionCount,\n\
+      \    userPercentage = round(todouble(userCount) / totalUser * 100.0, 2), \n\
+      \    userCount,\n    orderIndex\n| where orderIndex >= 0\n| order by orderIndex\
+      \ asc\n| project EventName, \n    sessionCount = iff(EventName in (noSessionEvents),\
+      \ \"N/A\", tostring(sessionCount)), \n    sessionPercentage = iff(EventName\
+      \ in (noSessionEvents), \"N/A\", strcat(sessionPercentage, \"%\")), \n    userCount,\
+      \ \n    userPercentage = strcat(userPercentage, \"%\");"
+  scoringRules:
+  - name: Order all upgrade steps correctly
+    rule: The funnel should display each step explicitly in the order given in eventOrder.
+    score: 2.0
+  - name: Correct user/session percentage calculation
+    rule: User and session percentages should be calculated correctly (relative to
+      total users/sessions at each step).
+    score: 3.0
+  - name: Use correct session/user identification
+    rule: Unique users should be counted by VSCodeMachineId and sessions by session/sessionId.
+    score: 1.0
+  - name: No-session steps marked
+    rule: "Steps that don\u2019t use sessions should return N/A for session metrics."
+    score: 1.0
+- name: Build Tool Distribution on Plan Confirmation
+  difficulty: medium
+  question: Analyze the build tool distribution among VSCode Java Upgrade plan confirmation
+    events, showing total sessions, succeeded sessions, total users, succeeded users,
+    and the success rate per build tool.
+  intent: Inquisitory
+  kusto:
+    distribution: "let base = database(\"VSCodeExt\").RawEventsVSCodeExt\n| where\
+      \ ExtensionName == \"vscjava.vscode-java-upgrade\"\n| where tostring(Properties[\"\
+      sessionid\"]) != \"MOCKSESSION\"\n| where ServerTimestamp  between (['<_startTime>']\
+      \ .. ['<_endTime>'])\n| extend majorVersion = toint(split(ExtensionVersion,\
+      \ \".\", 0)[0]), minorVersion = toint(split(ExtensionVersion, \".\", 1)[0])\n\
+      | where majorVersion > 0 or minorVersion >=10\n| join kind=inner (database(\"\
+      VSCodeInsights\").fact_user_isinternal) on DevDeviceId;\nlet raw = base\n| where\
+      \ isempty(['<_versions>']) or ExtensionVersion in (['<_versions>'])\n| where\
+      \ isempty( ['<_user_types>']) or IsInternal in ( ['<_user_types>'])\n| extend\
+      \ sessionId = tostring(Properties[\"sessionid\"]);\nraw \n| where EventName\
+      \ == \"vscjava.vscode-java-upgrade/confirmplan.end\"\n| extend buildTool = tostring(Properties[\"\
+      buildtool\"])\n| distinct buildTool, sessionId\nlet all = raw\n| where EventName\
+      \ == \"vscjava.vscode-java-upgrade/confirmplan.end\"\n| distinct VSCodeMachineId,\
+      \ startTime = ServerTimestamp, sessionId, majorVersion, minorVersion;\nlet openRewriteFailedResults\
+      \ = raw\n| where EventName ==  \"vscjava.vscode-java-upgrade/openrewrite.end\"\
+      \ and Properties[\"result\"] == \"failed\"\n| distinct VSCodeMachineId, sessionId,\
+      \ majorVersion, minorVersion\n| project sessionId, orResult = \"OpenResultFailed\"\
+      ;\nlet buildFixResult = raw\n| where EventName == \"vscjava.vscode-java-upgrade/buildfix.end\"\
+      \n| extend buildResult = iff(Properties[\"result\"] == \"true\", \"Succeeded\"\
+      , \"BuildFixFailed\")\n| distinct VSCodeMachineId, sessionId, majorVersion,\
+      \ minorVersion, buildResult\n| project sessionId, buildResult;\nlet result =\
+      \ all\n| join kind=leftouter openRewriteFailedResults on sessionId\n| join kind=leftouter\
+      \ buildFixResult on sessionId\n| extend result = case(isnotempty( buildResult),\
+      \ buildResult, isnotempty(orResult), orResult, \"Incomplete\")\n| project VSCodeMachineId,\
+      \ startTime, sessionId, result, majorVersion, minorVersion, version = strcat(majorVersion,\
+      \ \".\", minorVersion);;| join result on sessionId\n| summarize totalSession\
+      \ = dcount(sessionId), succeededSession = dcountif(sessionId, result  == \"\
+      Succeeded\"),\ntotalUser = dcount(VSCodeMachineId), succeededUser = dcountif(VSCodeMachineId,\
+      \ result  == \"Succeeded\") by buildTool\n| project buildTool, succeededSession,\
+      \ totalSession, [\"succeedRate (%)\"] = round(succeededSession * 1.0 / totalSession,\
+      \ 4) * 100"
+  scoringRules:
+  - name: Show all build tools
+    rule: All unique buildTool values should be included in the breakdown.
+    score: 1.0
+  - name: Success per build tool
+    rule: Output should show both total and succeeded sessions and users for each
+      build tool.
+    score: 2.0
+  - name: Success rate calculation
+    rule: 'The calculation for succeedRate (%) must be accurate: succeededSession
+      / totalSession * 100.'
+    score: 1.0
+- name: Migration Distribution by Java Version
+  difficulty: medium
+  question: Provide a summary of migration source and target Java versions during
+    plan confirmations, with session/user success rates by migration direction.
+  intent: Inquisitory
+  kusto:
+    migration: "let base = database(\"VSCodeExt\").RawEventsVSCodeExt\n| where ExtensionName\
+      \ == \"vscjava.vscode-java-upgrade\"\n| where tostring(Properties[\"sessionid\"\
+      ]) != \"MOCKSESSION\"\n| where ServerTimestamp  between (['<_startTime>'] ..\
+      \ ['<_endTime>'])\n| extend majorVersion = toint(split(ExtensionVersion, \"\
+      .\", 0)[0]), minorVersion = toint(split(ExtensionVersion, \".\", 1)[0])\n| where\
+      \ majorVersion > 0 or minorVersion >=10\n| join kind=inner (database(\"VSCodeInsights\"\
+      ).fact_user_isinternal) on DevDeviceId;\nlet raw = base\n| where isempty(['<_versions>'])\
+      \ or ExtensionVersion in (['<_versions>'])\n| where isempty( ['<_user_types>'])\
+      \ or IsInternal in ( ['<_user_types>'])\n| extend sessionId = tostring(Properties[\"\
+      sessionid\"]);\nraw \n| where EventName == \"vscjava.vscode-java-upgrade/confirmplan.end\"\
+      \n| extend sourceVersion = toint(Properties[\"sourcejavaversion\"]), targetVersion\
+      \ = toint(Properties[\"targetjavaversion\"])\n| distinct sourceVersion, targetVersion,\
+      \ sessionId\nlet all = raw\n| where EventName == \"vscjava.vscode-java-upgrade/confirmplan.end\"\
+      \n| distinct VSCodeMachineId, startTime = ServerTimestamp, sessionId, majorVersion,\
+      \ minorVersion;\nlet openRewriteFailedResults = raw\n| where EventName ==  \"\
+      vscjava.vscode-java-upgrade/openrewrite.end\" and Properties[\"result\"] ==\
+      \ \"failed\"\n| distinct VSCodeMachineId, sessionId, majorVersion, minorVersion\n\
+      | project sessionId, orResult = \"OpenResultFailed\";\nlet buildFixResult =\
+      \ raw\n| where EventName == \"vscjava.vscode-java-upgrade/buildfix.end\"\n|\
+      \ extend buildResult = iff(Properties[\"result\"] == \"true\", \"Succeeded\"\
+      , \"BuildFixFailed\")\n| distinct VSCodeMachineId, sessionId, majorVersion,\
+      \ minorVersion, buildResult\n| project sessionId, buildResult;\nlet result =\
+      \ all\n| join kind=leftouter openRewriteFailedResults on sessionId\n| join kind=leftouter\
+      \ buildFixResult on sessionId\n| extend result = case(isnotempty( buildResult),\
+      \ buildResult, isnotempty(orResult), orResult, \"Incomplete\")\n| project VSCodeMachineId,\
+      \ startTime, sessionId, result, majorVersion, minorVersion, version = strcat(majorVersion,\
+      \ \".\", minorVersion);;| join result on sessionId\n| summarize totalSession\
+      \ = dcount(sessionId), succeededSession = dcountif(sessionId, result  == \"\
+      Succeeded\"),\ntotalUser = dcount(VSCodeMachineId), succeededUser = dcountif(VSCodeMachineId,\
+      \ result  == \"Succeeded\") by sourceVersion, targetVersion\n| project sourceVersion,\
+      \ targetVersion, succeededSession, totalSession, [\"succeedRate (%)\"] = round(succeededSession\
+      \ * 1.0 / totalSession, 4) * 100"
+  scoringRules:
+  - name: Show source and target Java versions
+    rule: 'Output should include all migration directions: sourceVersion and targetVersion
+      combinations.'
+    score: 1.0
+  - name: Success per migration direction
+    rule: Success (sessions and users) must be broken out by migration direction.
+    score: 2.0
+  - name: Calculate success rate
+    rule: The succeedRate (%) should be computed as succeededSession / totalSession
+      * 100 for each migration path.
+    score: 1.0
