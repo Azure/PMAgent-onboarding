@@ -8,6 +8,7 @@ on:
       - 'products/**'
       - 'shared/index.yml'
       - 'shared/data_hygiene.yml'
+      - 'evaluation/**'
   workflow_dispatch:
     inputs:
       enable_auto_merge:
@@ -53,6 +54,11 @@ jobs:
           mkdir -p target/autogen/prompts/insights_writer_agent
           if [ -f "shared/data_hygiene.yml" ]; then
             cp shared/data_hygiene.yml target/autogen/prompts/insights_writer_agent/
+          fi
+
+          # evaluation -> target/evaluation
+          if [ -d "evaluation" ] && [ "$(ls -A evaluation)" ]; then
+            rsync -a --delete evaluation/ target/benchmark/evaluation/
           fi
 
       # Commit and push changes
