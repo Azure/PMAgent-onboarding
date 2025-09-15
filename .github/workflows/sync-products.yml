@@ -58,7 +58,7 @@ jobs:
 
           # evaluation -> target/evaluation
           if [ -d "evaluation" ] && [ "$(ls -A evaluation)" ]; then
-            rsync -a --delete evaluation/ target/evaluation/
+            rsync -a --delete evaluation/ target/benchmark/evaluation/
           fi
 
       # Commit and push changes
