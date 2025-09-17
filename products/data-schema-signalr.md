@@ -1,318 +1,681 @@
-# Azure SignalR Service / Azure Web PubSub – Product and Data Overview
+# SignalR - Product and Data Overview Template
 
 ## 1. Product Overview
 
-Azure SignalR Service and Azure Web PubSub Service are fully managed services for building real-time web applications. They support WebSocket and other protocols to enable low-latency, high-frequency communication between clients and servers.
+SignalR is a real-time messaging service in Azure, supporting both SignalR and Web PubSub workloads. This onboarding covers the PowerBI/ADX queries and datasets for operational QoS, connectivity, service usage, management, billing, retention, customer and subscription analytics, and feature tracking. The main data source is the `signalrinsights.eastus2` cluster and `SignalRBI` database.
 
-These two services share the same backend infrastructure and telemetry data in Azure Data Explorer.
-
-### Key Features
-
-- **Real-time Messaging**: Facilitates instant communication between servers and clients.
-- **High Scalability**: Automatically scales to handle millions of concurrent connections.
-- **Integration**: Seamlessly integrates with Azure Functions and other Azure services.
-- **Service Modes**: Supports multiple service modes, including Default, Serverless, and Classic.
-
-## 2. Azure Resource Structure
-
-Each instance is uniquely identified by a `ResourceId`:
-
-- **SignalR**:  
-  `/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.SignalRService/SignalR/{resourceName}`
-
-- **Web PubSub**:  
-  `/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.SignalRService/WebPubSub/{resourceName}`
-
-> Web PubSub includes two subtypes: the standard **Web PubSub** (commonly used by most users) and **Web PubSub for Socket.IO** (typically referred to as Socket.IO or SocketIO).
-Socket.IO further supports two service modes: the default mode (more commonly used) and the serverless mode. Each resource can belong to only one subtype and one service mode, and this classification cannot be inferred from the `ResourceId` pattern alone. To determine the subtype and service mode, you must join with the `RPSettingLatest` table.
-
-> A single `SubscriptionId` may contain multiple resources.  
-> Multiple subscriptions can belong to the same customer, identified by a shared `CloudCustomerGuid`.
-> When aggregating at the customer level, always group by `CloudCustomerGuid`. For subscription-level aggregation, use `SubscriptionId`, and for resource-level details, use `ResourceId`.
-
-## 3. Data Platform Overview
+## 2. Data Platform Overview
 
 - **Data Storage**: Azure Data Explorer (ADX)
-- **Product**: AzureSignalRService
-- **Kusto Cluster**: `https://signalrinsights.eastus2.kusto.windows.net`
-- **Kusto Database**: `SignalRBI`
-- **Primary Metrics**: Connection count, message count, and billed units are key indicators. While traffic metrics reflect usage, billed units represent fixed costs that apply even when a resource is idle. Billing typically combines base unit charges with additional message-based costs.
+- **Product**: SignalR
+- **Product Nick Names**:  
+  > **[TODO]Data_Engineer**: Fill in commonly used short names or abbreviations for the product to help PMAgent accurately recognize the target product from user conversations.
+- **Kusto Cluster**: signalrinsights.eastus2
+- **Kusto Database**: SignalRBI
+- **Access Control**:  
+  > **[TODO] Data Engineer**: If this product’s data has high confidentiality concerns, please specify the allowed **groups/users** here. If left blank, general users will be permitted to run analyses on this product, including cross-product scenarios.  
 
-## 4. Table Schemas in Azure Data Explorer
+## 3. Table Schemas in Azure Data Explorer
 
-### 4.1 `BillingUsage_Daily`
+### OperationQoS_Daily
 
-The `BillingUsage_Daily` table contains **daily billing summary data** at the granularity of **one row per (ResourceId, SKU, Date)**.  
-Key characteristics:
+| Column                | Type     |
+|-----------------------|----------|
+| env_name              | string   |
+| env_time              | datetime |
+| resourceId            | string   |
+| env_cloud_role        | string   |
+| env_cloud_roleInstance| string   |
+| env_cloud_environment | string   |
+| env_cloud_location    | string   |
+| env_cloud_deploymentUnit | string|
+| totalUpTimeSec        | long     |
+| totalTimeSec          | long     |
 
-- **Time Scope**: Data is recorded and finalized **after the end of each UTC day**.  
-  - ⚠️ This means **no data is available for the current UTC day**.
-- **Usage Fields**: The `Quantity` field represents billed units per SKU per day, reflecting resource usage and potential fixed charges.
-- **Aggregation**: Because of daily granularity, this table can be used to infer resource or subscription **existence windows**, such as:
-  - First seen date: `min(Date)` per `ResourceId` or `SubscriptionId`
-  - Last seen date: `max(Date)` per `ResourceId` or `SubscriptionId`
+### ConnectivityQoS_Daily
 
-| Column          | Type     | Description                         |
-|-----------------|----------|-------------------------------------|
-| Date            | datetime | Usage date                          |
-| Region          | string   | Azure region                        |
-| SubscriptionId  | string   | Azure subscription ID               |
-| ResourceId      | string   | Unique resource ID                  |
-| SKU             | string   | Pricing tier, (e.g. Free, Standard, Premium, MessageCount, MessageCountPremium)  |
-| Quantity        | real     | Usage quantity                      |
+| Column                | Type     |
+|-----------------------|----------|
+| env_name              | string   |
+| env_time              | datetime |
+| resourceId            | string   |
+| env_cloud_role        | string   |
+| env_cloud_roleInstance| string   |
+| env_cloud_environment | string   |
+| env_cloud_location    | string   |
+| env_cloud_deploymentUnit | string|
+| totalUpTimeSec        | long     |
+| totalTimeSec          | long     |
 
-### 4.2 `FeatureTrackV2_Daily` and `FeatureTrackV2_EU_Daily`
+### MaxConnectionCount_Daily
 
-> Same schema, separate data regions — use union for full analysis.
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Role              | string   |
+| SubscriptionId    | string   |
+| CustomerType      | string   |
+| Region            | string   |
+| MaxConnectionCount| long     |
 
-| Column          | Type     | Description                         |
-|-----------------|----------|-------------------------------------|
-| Date            | datetime | Feature usage date                  |
-| Feature         | string   | Feature name                        |
-| Category        | string   | Feature category                    |
-| ResourceId      | string   | Unique resource ID                  |
-| SubscriptionId  | string   | Azure subscription ID               |
-| Properties      | string   | Additional metadata                 |
-| RequestCount    | long     | Number of feature requests          |
+### RPSettingLatest
 
-### 4.3 `RPSettingLatest`
+| Column                | Type     |
+|-----------------------|----------|
+| ResourceId            | string   |
+| Region                | string   |
+| SKU                   | string   |
+| Kind                  | string   |
+| State                 | string   |
+| ServiceMode           | string   |
+| IsUpstreamSet         | bool     |
+| IsEventHandlerSet     | bool     |
+| EnableTlsClientCert   | bool     |
+| IsPrivateEndpointSet  | bool     |
+| EnablePublicNetworkAccess | bool |
+| DisableLocalAuth      | bool     |
+| DisableAadAuth        | bool     |
+| IsServerlessTimeoutSet| bool     |
+| AllowAnonymousConnect | bool     |
+| EnableRegionEndpoint  | bool     |
+| ResourceStopped       | bool     |
+| EnableLiveTrace       | bool     |
+| EnableResourceLog     | bool     |
+| LastUpdated           | datetime |
+| Extras                | string   |
 
-The `RPSettingLatest` table stores the **latest known configuration state** for each resource, as of its last update (`LastUpdated`).  
-Key characteristics:
+### SubscriptionMappings
 
-- **Snapshot Table**: It reflects the **most recently observed state** per resource, **not** daily updates.
-- **Historical Data**: Many records may belong to **deleted or inactive resources**, making it unsuitable for standalone time-based analysis (e.g., counting resources in a given month).
-- **Recommended Usage**: Use this table in **joins with daily tables** (e.g., `BillingUsage_Daily`, `ResourceMetrics`) to enrich resource-level analytics with configuration context.
-  - Example: Filter April resources using `BillingUsage_Daily` and then join to `RPSettingLatest` to analyze how many were in Serverless mode.
+| Column            | Type     |
+|-------------------|----------|
+| P360_ID           | string   |
+| CloudCustomerGuid | string   |
+| SubscriptionId    | string   |
+| CustomerType      | string   |
+| CustomerName      | string   |
+| SegmentName       | string   |
+| OfferType         | string   |
+| OfferName         | string   |
+| BillingType       | string   |
+| WorkloadType      | string   |
+| S500              | string   |
 
-> WARN: Always apply filters like `LastUpdated > ago(30d)` or join with active usage tables to avoid including outdated or irrelevant resource entries.
+### SumMessageCount_Daily
 
-| Column Name             | Type     | Description                                          |
-|-------------------------|----------|------------------------------------------------------|
-| ResourceId              | string   | Unique identifier of the SignalR resource.           |
-| Region                  | string   | Azure region where the resource is deployed.         |
-| SKU                     | string   | Stock Keeping Unit of the resource. (e.g. Free_F1, Standard_S1, Standard_S2, Premium_P1, Premium_P2)  |
-| Kind                    | string   | The kind of the SignalR resource. (e.g. SocketIO)    |
-| State                   | string   | Current state of the resource (e.g., Succeeded, Failed, Updating, etc.). |
-| ServiceMode             | string   | Mode of the service (e.g., Default, Serverless, Classic). Note it doesn't apply to SocketIO, for SocketIO, see Extras  |
-| IsUpstreamSet           | bool     | Indicates if upstream is configured.                 |
-| IsEventHandlerSet       | bool     | Indicates if event handler is configured.            |
-| EnableTlsClientCert     | bool     | Indicates if TLS client certificate is enabled.      |
-| IsPrivateEndpointSet    | bool     | Indicates if a private endpoint is configured.       |
-| EnablePublicNetworkAccess | bool   | Indicates if public network access is enabled.       |
-| DisableLocalAuth        | bool     | Indicates if local authentication is disabled.       |
-| DisableAadAuth          | bool     | Indicates if Azure AD authentication is disabled.    |
-| IsServerlessTimeoutSet  | bool     | Indicates if serverless timeout is set.              |
-| AllowAnonymousConnect   | bool     | Indicates if anonymous connections are allowed.      |
-| EnableRegionEndpoint    | bool     | Indicates if regional endpoint is enabled.           |
-| ResourceStopped         | bool     | Indicates if the resource is stopped.                |
-| EnableLiveTrace         | bool     | Indicates if live trace is enabled.                  |
-| EnableResourceLog       | bool     | Indicates if resource logging is enabled.            |
-| LastUpdated             | datetime | Timestamp of the last update to the settings.        |
-| Extras                  | string   | Additional information or metadata. i.e. tags to indicate isAspire or serviceMode especially for socketIO. Sample value: `{"tags":{"isAspire":true},"socketIO":{"serviceMode":"Serverless"}}` |
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Role              | string   |
+| Region            | string   |
+| SubscriptionId    | string   |
+| CustomerType      | string   |
+| MessageCount      | long     |
 
-### 4.4 `ResourceMetrics`
+### AvgConnectionCountEP_Daily
 
-This table contains daily usage statistics for each resource, representing activity such as message throughput and connection counts on a per-day basis (UTC). Each row reflects the actual usage(including zero value) of a specific resource on a specific day, as long as the resource has not been deleted.
-Because data is recorded daily, it can also be used to infer resource existence—i.e., determining the earliest or latest day a resource was active.
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Role              | string   |
+| SubscriptionId    | string   |
+| CustomerType      | string   |
+| Region            | string   |
+| Endpoint          | string   |
+| AvgConnectionCount| long     |
 
-| Column              | Type     | Description             |
-|---------------------|----------|-------------------------|
-| Date                | datetime | Metric date             |
-| Region              | string   | Azure region            |
-| ResourceId          | string   | Resource ID             |
-| SumMessageCount     | real     | Total messages          |
-| MaxConnectionCount  | real     | Peak connections        |
-| AvgConnectionCount  | real     | Average connections     |
-| SumSystemErrors     | real     | System error count      |
-| SumTotalOperations  | real     | Total operations        |
+### ManageRPQosDaily
 
-### 4.5 `SubscriptionMappings`
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| ApiName           | string   |
+| SubscriptionId    | string   |
+| CustomerType      | string   |
+| Region            | string   |
+| Result            | string   |
+| Count             | long     |
 
-This table represents a global **snapshot** of all Azure subscriptions, including their properties such as tenant ID, customer type, commerce details. Each row corresponds to a subscription at its latest known state.
+### BillingUsage_Daily
 
-> ⚠️ This table is **not intended to be used as a primary table** for product-specific analysis, as it contains data across all Azure services and may include subscriptions unrelated to the target product.
-> 
-> Instead, it should be **joined** with other usage or billing tables (e.g., `BillingUsage_Daily`, `ResourceMetrics`) via `SubscriptionId` to enrich the context with properties such as:
-> - Whether the subscription is external or internal.
-> - Billing type.
-> - Tenant segmentation.
-> - Additional customer metadata.
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Region            | string   |
+| SubscriptionId    | string   |
+| ResourceId        | string   |
+| SKU               | string   |
+| Quantity          | real     |
 
-| Column Name       | Type   | Description                                                   |
-|-------------------|--------|---------------------------------------------------------------|
-| P360_ID           | string | Internal classification                                       |
-| CloudCustomerGuid | string | Customer-level GUID                                           |
-| SubscriptionId    | string | Azure subscription ID                                         |
-| CustomerType      | string | e.g., Internal, External                                      |
-| SegmentName       | string | e.g., Microsoft Internal, Major Commercial, etc.              |
-| OfferType         | string | Azure offer type associated with the subscription             |
-| OfferName         | string | Human-readable name of the offer                              |
-| BillingType       | string | e.g., Internal, External - Billable, External Non - Billable  |
-| CustomerName      | string | Customer or organization name                                 |
-| WorkloadType      | string | e.g., DevTest, Production, etc.                               |
-| S500              | string | S500 customer classification (e.g., Yes or No).               |
+### RuntimeRequestsGroups_Daily
 
-### 4.6 `CSSTicketsByStartTime(startDate:datetime)`
-This is a custom kusto function to get SignalR and Web PubSub customer support tickets metadata. Each row represents a unique support case.
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Category          | string   |
+| Metrics           | string   |
+| ResourceCount     | long     |
+| RequestCount      | long     |
 
-| Column Name         | Type       | Description                                                                 |
-|---------------------|------------|-----------------------------------------------------------------------------|
-| IncidentId          | string     | Unique identifier for the support incident.                                 |
-| CreatedDateTime     | datetime   | Timestamp when the incident was first created.                              |
-| State               | string     | Current state of the incident (e.g., Active, Resolved).                     |
-| Severity            | string     | Assigned severity level (e.g. A, B, C) indicating urgency.                  |
-| SupportCountry      | string     | Country associated with the support request origin.                         |
-| Title               | string     | Short title or summary of the incident.                                     |
-| Status              | string     | Descriptive status of the case (e.g. Troubleshooting, Mitigated, Resolved). |
-| SupportProductName  | string     | Specific product under support request (e.g., Azure SignalR Service, Azure Web PubSub Service). |
-| Customer            | string     | Customer organization or account associated with the incident.              |
-| RegionName          | string     | Azure region tied to the resource or support context (e.g., East US).       |
-| ResourceUri         | string     | Full resource URI that was impacted by the incident.                        |
+### RuntimeTransport_Daily / RuntimeTransport_EU_Daily
 
-## 5. Common Analytical Scenarios
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Feature           | string   |
+| Transport         | string   |
+| Framework         | string   |
+| ResourceId        | string   |
+| SubscriptionId    | string   |
+| RequestCount      | long     |
 
-- **Active Resources**: Analyze `MaxConnectionCount` with at least 1 connection in a day to assess user engagement.
-- **Message Throughput**: Use `SumMessageCount` to evaluate message throughput.
-- **Feature Usage**: Use `FeatureTrackV2_Daily` and `FeatureTrackV2_EU_Daily` to understand which features are most used.
-- **Billing Analysis**: Use `BillingUsage_Daily` and SKU info for revenue estimation.
-- **Configuration Status**: Use `RPSettingLatest` to identify resource configurations.
+### KPIv2019
 
-## 6. Common Filters and Definitions
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| SubscriptionCount | long     |
+| ResourceCount     | long     |
 
-### 6.1 AI-Related Resources
+### ChurnCustomers_Monthly
 
-Filter SignalR resources that are likely associated with AI workloads based on `ResourceId` naming conventions:
+| Column            | Type     |
+|-------------------|----------|
+| Month             | datetime |
+| ServiceType       | string   |
+| Total             | long     |
+| Churn             | long     |
+| Standard          | long     |
+| StandardChurn     | long     |
+| RunDay            | datetime |
 
-```Kusto
-// Apply when a ResourceId field is available
-| where ResourceId has 'gpt' or 
-       ResourceId has 'ai' or 
-       ResourceId has 'ml' or 
-       ResourceId has 'cognitive' or 
-       ResourceId contains 'openai' or 
-       ResourceId contains 'chatgpt'
+### ConvertCustomer_Weekly
+
+| Column            | Type     |
+|-------------------|----------|
+| Week              | datetime |
+| ServiceType       | string   |
+| FreeToStandard    | long     |
+| TotalCustomers    | long     |
+| StandardCustomers | long     |
+| RunDay            | datetime |
+| FreeToPaid        | long     |
+| StandardToPremium | long     |
+| FreeToPremium     | long     |
+| PremiumCustomers  | long     |
+
+### DeleteSurvey
+
+| Column            | Type     |
+|-------------------|----------|
+| TIMESTAMP         | datetime |
+| Deployment        | string   |
+| resourceId        | string   |
+| reason            | string   |
+| feedback          | string   |
+| objectId          | string   |
+| sessionId         | string   |
+
+### CustomerRetentionSnapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| C360_ID           | string   |
+| StartDate         | datetime |
+| EndDate           | datetime |
+
+### SubscriptionRetentionSnapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| SubscriptionId    | string   |
+| StartDate         | datetime |
+| EndDate           | datetime |
+
+### ResourceRetentionSnapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| ResourceId        | string   |
+| StartDate         | datetime |
+| EndDate           | datetime |
+
+### Cached_ResourceFlow_Snapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| Category          | string   |
+| Region            | string   |
+| SKU               | string   |
+| HasConnection     | bool     |
+| LiveRatio         | string   |
+| ResourceCnt       | long     |
+| Date              | datetime |
+| ServiceType       | string   |
+| Partition         | string   |
+
+### Cached_SubsTotalWeekly_Snapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| Week              | datetime |
+| ServiceType       | string   |
+| SubscriptionId    | string   |
+| Region            | string   |
+| SKU               | string   |
+| HasConnection     | bool     |
+| LiveRatio         | string   |
+
+### Cached_SubsTotalMonthly_Snapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| Month             | datetime |
+| ServiceType       | string   |
+| SubscriptionId    | string   |
+| Region            | string   |
+| SKU               | string   |
+| HasConnection     | bool     |
+| LiveRatio         | string   |
+
+### Cached_CustomerFlow_Snapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| Category          | string   |
+| Region            | string   |
+| SKU               | string   |
+| HasConnection     | bool     |
+| LiveRatio         | string   |
+| CustomerType      | string   |
+| SegmentionType    | string   |
+| CustomerCnt       | long     |
+| Date              | datetime |
+| ServiceType       | string   |
+| Partition         | string   |
+
+### Cached_Asrs_TopCustomersWoW_v2_Snapshot
+
+| Column                    | Type     |
+|---------------------------|----------|
+| P360_ID                   | string   |
+| P360_CustomerDisplayName  | string   |
+| SKU                       | string   |
+| CustomerType              | string   |
+| BillingType               | string   |
+| Category                  | string   |
+| CurrentValue              | real     |
+| P360Url                   | string   |
+| LastDay                   | datetime |
+| UsageType                 | string   |
+| CurrentValue1             | real     |
+| PrevValue                 | real     |
+| W3Value                   | real     |
+| DeltaValue                | real     |
+| Rank                      | long     |
+| W1Rank                    | long     |
+| W3Rank                    | long     |
+
+### FeatureTrackV2_Daily / FeatureTrackV2_EU_Daily / FeatureTrack_AutoScale_Daily / FeatureTrack_Daily
+
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Feature           | string   |
+| Category          | string   |
+| ResourceId        | string   |
+| SubscriptionId    | string   |
+| Properties        | string   |
+| RequestCount      | long     |
+
+### ManageResourceTags
+
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| SubscriptionId    | string   |
+| ResourceId        | string   |
+| RequestName       | string   |
+| Tags              | string   |
+| Count             | long     |
+
+### AwpsRuntimeRequestsGroups_Daily
+
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Category          | string   |
+| Metrics           | string   |
+| ResourceCount     | long     |
+| RequestCount      | long     |
+
+### KPI_AWPS / KPI_SocketIO
+
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| SubscriptionCount | long     |
+| ResourceCount     | long     |
+
+### OKRv2021 / OKRv2021_AWPS / OKRv2021_SocketIO
+
+| Column            | Type     |
+|-------------------|----------|
+| Date              | datetime |
+| Category          | string   |
+| Value             | real     |
+
+### AwpsRetention_SubscriptionSnapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| SubscriptionId    | string   |
+| StartDate         | datetime |
+| EndDate           | datetime |
+
+### AwpsRetention_CustomerSnapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| C360_ID           | string   |
+| StartDate         | datetime |
+| EndDate           | datetime |
+
+### AwpsRetention_ResourceSnapshot
+
+| Column            | Type     |
+|-------------------|----------|
+| ResourceId        | string   |
+| StartDate         | datetime |
+| EndDate           | datetime |
+
+---
+
+# SignalR Kusto Query Playbook
+
+## Overview
+
+**Product Name:** SignalR  
+**Summary:**  
+This dataset contains PowerBI/ADX queries for SignalR and Web PubSub, covering operational QoS, connectivity, service usage, management, billing, retention, customer and subscription analytics, and feature tracking. The main data source is the `signalrinsights.eastus2` cluster and `SignalRBI` database.
+
+**Primary Cluster:** `signalrinsights.eastus2`  
+**Primary Database:** `SignalRBI`  
+
+---
+
+## Conventions & Assumptions
+
+### Time Semantics
+
+- **Timestamp Columns Observed:**  
+  - `env_time` (OperationQoS_Daily, ConnectivityQoS_Daily)
+  - `Date` (most daily tables)
+  - `Month`, `Week` (monthly/weekly tables)
+  - `StartDate`, `EndDate` (retention/snapshot tables)
+  - `TIMESTAMP` (DeleteSurvey)
+- **Canonical Time Column:**  
+  - Use `Date` for daily aggregations.  
+  - Alias other columns to `Date` via `project-rename` as needed.
+- **Typical Windows:**  
+  - `ago(30d)`, `ago(43d)` for recent data.
+  - Monthly/weekly bins: use `bin(Date, 1d)`, `bin(Date, 7d)`, `bin(Date, 30d)` as appropriate.
+- **Timezone:**  
+  - Not explicitly stated. **Assume UTC** unless otherwise specified.
+
+### Freshness & Completeness Gates
+
+- **Ingestion Cadence:**  
+  - Daily tables are used; current day may be incomplete.
+- **Completeness Gate Pattern:**  
+  - Use previous full day/week/month for reporting.  
+  - For multi-region/sharded tables, recommend:  
+    ```kusto
+    let last_complete_day = toscalar(
+      Table
+      | summarize min_row_count = min(row_count()) by Date
+      | where min_row_count > threshold
+      | summarize max(Date)
+    );
+    Table | where Date == last_complete_day
+    ```
+  - If unknown, **avoid using current day**.
+
+### Joins & Alignment
+
+- **Frequent Keys:**  
+  - `ResourceId`, `SubscriptionId`, `Region`, `CustomerType`, `P360_ID`, `C360_ID`
+- **Typical Join Kinds:**  
+  - `inner`, `innerunique`, `leftouter`
+- **Post-Join Hygiene:**  
+  - Use `project-rename` to align key names.
+  - Use `coalesce()` for fallback values.
+  - Drop unused columns with `project-away`.
+
+### Filters & Idioms
+
+- **Common Predicates:**  
+  - `has`, `contains`, `in` (case-sensitive by default)
+- **Cohort Construction:**  
+  - Build allowlist/denylist via facts, then `join kind=inner` to filter.
+- **Default Exclusions:**  
+  - Exclude test/internal data using resource naming patterns or environment filters.
+
+### Cross-Cluster/DB & Sharding
+
+- **Source Qualification:**  
+  - Use `cluster('signalrinsights.eastus2').database('SignalRBI').TableName` for explicit cross-cluster queries.
+- **Sharded Tables:**  
+  - For EU/region shards (e.g., `RuntimeTransport_Daily` vs. `RuntimeTransport_EU_Daily`):  
+    ```kusto
+    union RuntimeTransport_Daily, RuntimeTransport_EU_Daily
+    | project-rename Date = Date, Region = Region, ...
+    | summarize ...
+    ```
+  - Normalize keys/time before summarizing.
+
+### Table Classes
+
+- **Fact Tables:**  
+  - Daily event counts, e.g., `SumMessageCount_Daily`, `MaxConnectionCount_Daily`
+- **Snapshot Tables:**  
+  - Latest state, e.g., `RPSettingLatest`, retention snapshots
+- **Pre-aggregated Tables:**  
+  - KPIs, cached flows, e.g., `KPIv2019`, `Cached_ResourceFlow_Snapshot`
+- **Usage Guidance:**  
+  - Use fact tables for time series/event analysis.
+  - Use snapshot tables for current state.
+  - Use pre-aggregated tables for reporting/KPIs; avoid for granular analysis.
+
+---
+
+## Entity & Counting Rules (Core Definitions)
+
+### Entity Model
+
+- **Resource:**  
+  - Key: `ResourceId`
+- **Subscription:**  
+  - Key: `SubscriptionId`
+- **Customer:**  
+  - Key: `P360_ID`, `C360_ID`, `CloudCustomerGuid`
+- **Grouping Levels:**  
+  - By `Region`, `CustomerType`, `SKU`, `ServiceType`
+
+### Business Definitions
+
+- **QoS (Quality of Service):**  
+  - Calculated as `sum(totalUpTimeSec) / sum(totalTimeSec)`; fallback to `1.0` if denominator is zero.
+- **SLA Attainment:**  
+  - Fraction of resources with QoS above threshold (e.g., `>=0.999` or `>=0.995`).
+- **Churn/Retention:**  
+  - Churn: customers/resources lost in a period.
+  - Retention: tracked via snapshot tables (`StartDate`, `EndDate`).
+
+---
+
+## Canonical Tables
+
+(See section 3 above for detailed schemas and usage notes.)
+
+---
+
+## Views (Reusable Layers)
+
+*No explicit views defined in input. Build reusable layers as needed using `let` statements in queries.*
+
+---
+
+## Query Building Blocks (Copy-paste snippets, contains snippets and description)
+
+### Time Window Template
+
+```kusto
+let startDate = datetime(2024-05-01);
+let endDate = datetime(2024-05-31);
+Table
+| where Date >= startDate and Date < endDate
+```
+Or for rolling window:
+```kusto
+Table
+| where Date > ago(30d)
 ```
 
-### 6.2 Revenue Estimation
-Estimate revenue from daily usage using SKU-based unit pricing. The following example uses the `BillingUsage_Daily` table.
+### Join Template
 
-```Kusto
-| extend Revenue = case(
-    SKU == 'Free', 0.0,
-    SKU == 'Standard', 1.61,
-    SKU == 'Premium', 2.0,
-    1.0  // MessageCount and MessageCountPremium
-) * Quantity
+```kusto
+TableA
+| join kind=inner (
+    TableB
+    | project SubscriptionId, CustomerType
+) on SubscriptionId
 ```
 
-### 6.3 Excluding Internal/Test Resources
-Always exclude internal or test subscriptions to focus on real customer behavior. This filter must be applied in nearly all analytical scenarios unless the user explicitly requests internal analysis.
+### De-dup Pattern
 
-```Kusto
-| where SubscriptionId !in (SignalRTeamInternalSubscriptionIds)
+```kusto
+Table
+| summarize arg_max(Date, *) by ResourceId
 ```
 
-### 6.4 Customer-Level Join
+### Important Filters
 
-```Kusto
-| join kind = inner SubscriptionMappings on SubscriptionId
+```kusto
+| where resourceId has '/signalr/'
+| where Region in ('eastus', 'westus')
+| where CustomerType != 'Internal'
 ```
 
-### 6.5 **Active** Resource
-A resource is considered active on a given day if it has at least one connection recorded.
+### ID Parsing/Derivation
 
-This definition is applied when using or joining the `ResourceMetrics` table:
-
-```Kusto
-| where MaxConnectionCount > 0
+```kusto
+| extend SubscriptionId = extract(@"subscriptions/([^/]+)", 1, resourceId)
 ```
 
-> WARN: Only apply this filter **when the user's question explicitly involves active users or active usage**. Do not filter out inactive resources by default unless the term "active" is clearly mentioned in the user prompt.
+### Sharded Union
 
-
-## 7. Notes and Considerations
-
-- All timestamps are in **UTC**.
-- Data refresh is **daily** with ~2 hours delay.
-- The latest available data is typically as of `startofday(now(), -1)`, due to processing delays. When answering user questions involving time ranges such as "recent X days" or "rolling X days", always use this as the effective end date to ensure accuracy.
-- Use filter `| where ResourceId has '/Microsoft.SignalRService/SignalR/'` for SignalR and `| where ResourceId has '/Microsoft.SignalRService/WebPubSub/'` for Web PubSub to filter specific service resource. Focus analysis on a single service type based on the question's context, unless the user explicitly requests to include both service types tegother in the same analysis.
-- Always use `ResourceMetrics`, `BillingUsage_Daily` or (`FeatureTrackV2_Daily` union `FeatureTrackV2_EU_Daily`) as the primary data source table when answering product usage questions, e.g. total revenue, customer count, sum messages, etc.. Never use `RPSettingLatest` or `SubscriptionMappings` directly for counting resources or customers, as these are **snapshot tables** and do **not** reflect time-based usage accurately.
-- If `SubscriptionId` is not an available column in the data table, it can be parsed from `ResourceId`, e.g. `| parse ResourceId with "/subscriptions/" SubscriptionId:string "/resourceGroups/" *`.
-- For **customer-level analysis**, always join `SubscriptionMappings` to access `CustomerName`, `CustomerType`, `BillingType`, or compute metrics like `dcount(CloudCustomerGuid)`.
-- Carefully interpret user references to **"external"** or **"external billable"**. If the context relates to customer segmentation or general usage (e.g., "external users"), prefer filtering by `CustomerType == "External"`. If the context involves billing, revenue, or the user explicitly mentions **external billable**, prefer filtering by `BillingType == "External - Billable"`.
-- For performance, unless the user explicitly specifies otherwise, limit query time ranges to **the most recent 30 days** for general status questions and **the most recent 6 months/weeks** for monthly/weekly trend analysis, and limit result rows to **≤ 20**(e.g., | top 20 by `<some-property>`).
-- Always exclude usage from internal engineering subscriptions (e.g. `| where SubscriptionId !in (SignalRTeamInternalSubscriptionIds)`) to focus on external customer behavior.
-
-
-## 8. Query Samples
-
-### 8.1 Top external billable customers (SignalR + Web PubSub together) by Average Connection Count in Last 28d
-
-```Kusto
-let endDate = startofday(now(), -1);
-let startDate = endDate - 27d;
-// specified external billable filter and Considerations filter
-let customer_filter = SubscriptionMappings
-    | where BillingType == 'External - Billable' and SubscriptionId !in (SignalRTeamInternalSubscriptionIds);
-ResourceMetrics
-| where Date between (startDate .. endDate)
-| parse ResourceId with "/subscriptions/" SubscriptionId:string "/resourceGroups/" *
-| join kind=inner (customer_filter) on SubscriptionId
-| summarize AvgConnectionCount = sum(AvgConnectionCount) by CloudCustomerGuid, CustomerName, Date
-| summarize AvgConnectionCount = avg(AvgConnectionCount) by CloudCustomerGuid, CustomerName
-// If not specified, use default 20 records
-| top 20 by AvgConnectionCount desc  
+```kusto
+union RuntimeTransport_Daily, RuntimeTransport_EU_Daily
+| project-rename Date = Date, Region = Region, ...
+| summarize RequestCount = sum(RequestCount) by Date, Region, Transport
 ```
 
-### 8.2 Top external SignalR customers by Revenue
+---
 
-```Kusto
-// If not specified, use default 30d time window
-let endDate = startofday(now(), -1);
-let startDate = endDate - 29d;
-// specified external CustomerType filter per description and Considerations filter
-let customer_filter = SubscriptionMappings
-    | where CustomerType == 'External' and SubscriptionId !in (SignalRTeamInternalSubscriptionIds);
-BillingUsage_Daily
-| where Date between (startDate .. endDate)
-// Specify SignalR resource
-| where ResourceId has '/Microsoft.SignalRService/SignalR/'
-| parse ResourceId with "/subscriptions/" SubscriptionId:string "/resourceGroups/" *
-| join kind=inner (customer_filter) on SubscriptionId
-// calculate revenue
-| extend Revenue = case(
-    SKU == 'Free', 0.0,
-    SKU == 'Standard', 1.61,
-    SKU == 'Premium', 2.0,
-    1.0  // MessageCount and MessageCountPremium
-) * Quantity
-// group by CloudCustomerGuid as unique identifier and CustomerName as readable string.
-| summarize Revenue = sum(Revenue) by CloudCustomerGuid, CustomerName
-// If not specified, use default 20 records
-| top 20 by Revenue desc
+## Example Queries (with explanations)
+
+### 1. QoS Daily Calculation
+
+```kusto
+OperationQoS_Daily
+| where env_time > ago(43d) and resourceId has '/signalr/'
+| summarize Qos = iif(sum(totalTimeSec) == 0, 1.0, 1.0*sum(totalUpTimeSec)/sum(totalTimeSec)), UpTime = sum(totalUpTimeSec), TotalTime = sum(totalTimeSec) by Date = env_time, Region = env_cloud_location, ResourceId = env_cloud_role
 ```
+**Description:**  
+Calculates daily QoS, uptime, and total time for SignalR resources over the last 43 days, grouped by date, region, and resource. Adapt by changing the time window or resource filter.
 
-### 8.3 Active SignalR Resource Count weekly trend by SKU
+---
 
-```Kusto
-// If not specified, use default 6 weeks time window for a weekly trend case
-let endDate = startofweek(now()) - 1d;
-let startDate = startofweek(endDate, -5);
-ResourceMetrics
-| where Date between (startDate .. endDate)
-// Specify SignalR resource
-| where ResourceId has '/Microsoft.SignalRService/SignalR/'
-// Exclude internal subs
-| parse ResourceId with "/subscriptions/" SubscriptionId:string "/resourceGroups/" *
-// Filter out internal resources.
-| where SubscriptionId !in (SignalRTeamInternalSubscriptionIds)
-// Use "Active" definition: any day with at least one connection
-| where MaxConnectionCount > 0
-// join BillingUsage_Daily to get SKU metadata
-| join kind = inner (BillingUsage_Daily) on Date, ResourceId
-// For each resource and week, pick the most recent SKU to avoid double counting
-| summarize SKU = max(SKU) by Week = startofweek(Date), ResourceId
-// Count distinct active resources per week and SKU
-| summarize ActiveResource = dcount(ResourceId) by Week, SKU
+### 2. SLA Attainment Summary
+
+```kusto
+OperationQoS_Daily
+| where env_time > ago(43d) and resourceId has '/signalr/'
+| summarize Qos = iif(sum(totalTimeSec) == 0, 1.0, 1.0*sum(totalUpTimeSec)/sum(totalTimeSec)), UpTime = sum(totalUpTimeSec), TotalTime = sum(totalTimeSec) by Date = env_time, Region = env_cloud_location, ResourceId = env_cloud_role
+| summarize TotalOperation = sum(TotalTime), Qos = iif(sum(TotalTime) == 0, 1.0, 1.0*sum(UpTime)/sum(TotalTime)), SlaAttainment = 1.0 * dcountif(ResourceId, Qos >=0.999, 4)/dcount(ResourceId, 4) by Date, Region
 ```
+**Description:**  
+Aggregates QoS and calculates SLA attainment per day and region. Use for reporting compliance.
+
+---
+
+### 3. Connectivity QoS Calculation
+
+```kusto
+ConnectivityQoS_Daily
+| where env_time > ago(43d) and resourceId has '/signalr/'
+| summarize Qos = iif(sum(totalTimeSec) == 0, 1.0, 1.0*sum(totalUpTimeSec)/sum(totalTimeSec)), UpTime = sum(totalUpTimeSec), TotalTime = sum(totalTimeSec) by Date = env_time, Region = env_cloud_location, ResourceId = env_cloud_role
+```
+**Description:**  
+Similar to operational QoS, but focused on connectivity metrics.
+
+---
+
+### 4. Max Connection Count by Subscription
+
+```kusto
+MaxConnectionCount_Daily
+| where Date > ago(30d)
+| summarize MaxConn = max(MaxConnectionCount) by SubscriptionId, Region
+```
+**Description:**  
+Finds the peak connection count per subscription and region in the last 30 days.
+
+---
+
+### 5. Message Count Summary
+
+```kusto
+SumMessageCount_Daily
+| where Date > ago(30d)
+| summarize TotalMessages = sum(MessageCount) by SubscriptionId, Region
+```
+**Description:**  
+Summarizes total message volume per subscription and region.
+
+---
+
+### 6. Resource Retention Snapshot
+
+```kusto
+ResourceRetentionSnapshot
+| where EndDate > ago(30d)
+| summarize ResourceCount = dcount(ResourceId) by bin(EndDate, 1d)
+```
+**Description:**  
+Counts retained resources per day over the past 30 days.
+
+---
+
+### 7. Sharded Transport Usage
+
+```kusto
+union RuntimeTransport_Daily, RuntimeTransport_EU_Daily
+| where Date > ago(30d)
+| summarize TotalRequests = sum(RequestCount) by Date, Transport, Region
+```
+**Description:**  
+Combines transport usage across regions, normalizes columns, and aggregates request counts.
+
+---
+
+## Reasoning Notes
+
+- **Timezone is not specified**; UTC is assumed for all time columns.
+- **Freshness gates** are not explicit; recommend using previous full day/week/month for reporting.
+- **Entity keys** inferred from table schemas and query usage.
+- **No explicit views**; reusable layers should be built via `let` blocks as needed.
+
+---
+
+**End of Playbook**
