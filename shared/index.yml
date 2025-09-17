@@ -62,3 +62,15 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "Product schema and Kusto playbook for Azure SignalR Service and Azure Web PubSub Service (incl. Socket.IO) used by PMAgent to analyze QoS, usage, retention, feature usage, and normalized revenue-like metrics."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
+  roles:
+    - signalr.admin
