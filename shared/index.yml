@@ -62,3 +62,15 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: Azure SignalR Service and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "Azure SignalR Service and Azure Web PubSub real-time messaging services. This entry contains the combined Product and Data Overview plus the Kusto Query Playbook for SignalR and Web PubSub using SignalRBI on signalrinsights.eastus2, with references to ARMProd and DDTelInsights."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-azure-signalr-service-and-web-pubsub.md"
+  roles:
+    - signalr.admin
