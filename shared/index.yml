@@ -62,3 +62,12 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "SignalR and Web PubSub real-time messaging analytics schema: daily facts for billing usage, connections, and messages; QoS tables; snapshots for enrichment; plus hourly errors and cross-cluster ARM/Web Tools telemetry."
+  tags:
+    - signalr
+    - webpubsub
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
