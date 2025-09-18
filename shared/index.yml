@@ -8,6 +8,7 @@
     - realtime
   knowledge_path:
     - "./data-schema-signalr.md"
+    - "./data-schema-azuresignalrservice.md"
   roles:
     - signalr.admin
 - name: GitHub Copilot Extension for Microsoft 365 Agents Toolkit
