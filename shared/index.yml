@@ -62,3 +62,13 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: AI Toolkit for Visual Studio Code (VS Code AI Foundry)
+  id: aifoundry_vscode_topic
+  description: "AI Toolkit for Visual Studio Code (VS Code AI Foundry) is a VS Code extension that helps developers build, deploy, and operate AI models and agents within VS Code, integrating with Azure AI services."
+  tags:
+    - AI Toolkit
+    - VS Code AI Foundry
+    - vscode
+    - aifoundry
+  knowledge_path:
+    - "./data-schema-ai-toolkit-for-visual-studio-code-(vs-code-ai-foundry).md"
