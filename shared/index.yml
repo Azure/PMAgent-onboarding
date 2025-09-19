@@ -62,3 +62,13 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "Power BI report queries for SignalR and Web PubSub covering OKR, ARR and AI customer growth, usage (revenue, connections, messages), service type growth (SignalR/WebPubSub/SocketIO), feature tracking (replicas, auto-scale, Blazor Server, Aspire, Socket.IO), external/billable customers, top customers, plus QoS, management API, VS integration and runtime request analyses."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
