@@ -62,3 +62,16 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: Azure SignalR Service and Web PubSub
+  id: azure_signalr_webpubsub_topic
+  description: "Azure SignalR Service (ASRS) and Azure Web PubSub (AWPS) are managed real-time messaging services for building WebSocket-based and publish/subscribe applications. This topic includes the product schema and Kusto playbook for OKR, ARR/revenue proxies, usage (connections/messages), service-type growth, feature tracking, subscription/customer counts, retention, QoS, and top customers across both SignalR and Web PubSub."
+  tags:
+    - signalr
+    - webpubsub
+    - awps
+    - asrs
+    - realtime
+  knowledge_path:
+    - "./data-schema-azure-signalr-service-and-web-pubsub.md"
+  roles:
+    - signalr.admin
