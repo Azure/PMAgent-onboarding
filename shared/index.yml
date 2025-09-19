@@ -62,3 +62,15 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "Azure SignalR Service and Azure Web PubSub Service are fully managed services for building real-time web applications. This topic contains the data format details for SignalR, WebPubSub, and WebPubSub for SocketIO services, including business logic, metric rules, and feature tracking."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
+  roles:
+    - signalr.admin
