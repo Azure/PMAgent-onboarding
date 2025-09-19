@@ -62,3 +62,17 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "Kusto Query Playbook and product schema for SignalR and Web PubSub analytics on ADX (cluster signalrinsights.eastus2, database SignalRBI), covering OKR/ARR, AI cohort growth, usage & revenue, service type growth, feature tracking, top customers, QoS, runtime requests, and retention."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+    - kusto
+    - adx
+    - okr
+    - arr
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
