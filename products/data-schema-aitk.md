@@ -132,13 +132,14 @@ aitoolkit_vscode
 
 ### 5.3 Mapping between AITK events (active events) and feature (or feature category)
 
-Rules for Mapping AITK events (active events) to feature (or feature category):
-- Always define a mapping table between features (or feature categories) and their corresponding event names using a `datatable` in Kusto.
-- Always join the event data with the mapping table using event name to associate each event with its corresponding feature (or feature categories).
-- Always ignore any events not listed in the mapping table. Only analyze events that are explicitly mapped to features.
-- Always starting from feature category, and ask user whether would like to break down by feature.
+Rules for Mapping AITK events (active events) to AITK features or AITK user behaviors (or actions):
+- Always define a mapping table between features (user behaviors) and their corresponding event names using a `datatable` in Kusto.
+- Always join the event data with the mapping table using event name to associate each event with its corresponding feature (or user behavior).
+- Always ignore any events not listed in the mapping table. Only analyze events that are explicitly mapped to features (or user behaviors).
+- The user behavior is an interactive action between user and ATIK, and it may be completed by 1 or more events. 
+- The feature is key capability of ATIK, and the user could complete several behaviors (or actions) with feature.
 
-| Event Name of AITK | Description of the Event | Mapping between Event and Feature Category | Mapping between Event and Feature | 
+| Event Name of AITK | Description of the Event | Mapping between Event and Feature | Mapping between Event and User Behavior | 
 | ---- | ---- | ---- | ---- | 
 | activation_details | Captures initial activation or launch of AI Studio | Getting Started | Activation | 
 | active_user_action | Logs user activity after activation. This is a legacy event and already replaced by activation_details. | Getting Started | Activation |  
