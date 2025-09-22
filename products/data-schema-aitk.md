@@ -218,19 +218,19 @@ Rules for Mapping AITK events (active events) to AITK features or AITK user beha
 | add_or_update_custom_evaluator | Added or updated a custom evaluator | Evaluation | Add/Update Custom Evaluator (CRUD Evaluator) |
 | delete_custom_evaluators | Deleted custom evaluator(s) | Evaluation | Delete Custom Evaluator (CRUD Evaluator) |
 | select_python_env | Selected a local Python environment | Evaluation | Select Local Python |
-| batch_run_import_dataset | Imported a dataset for batch run | Buld Run | Import Dataset |
-| batch_run_select_dataset | Selected dataset for batch processing | Buld Run | Select Dataset |
-| batch_run_export_dataset | Exported dataset used in batch run | Buld Run | Export Dataset |
-| batch_run_row | Processed a row in batch mode | Buld Run | Run Dataset |
-| batch_run_generate_dataset | Generated a dataset for batch run | Buld Run | Generate Dataset |
-| batch_run_get_rows | Retrieved dataset rows for processing | Buld Run | View Dataset |
-| batch_run_add_row | Manually added a new row to dataset | Buld Run | Manual CRUD for Dataset | 
-| batch_run_edit_row | Manually edited an existing row | Buld Run | Manual CRUD for Dataset | 
-| batch_run_delete_row | Deleted a row from the dataset | Buld Run | Manual CRUD for Dataset | 
-| batch_run_insert_column | Inserted a new column into dataset | Buld Run | Manual CRUD for Dataset | 
-| batch_run_remove_column | Removed a column from dataset | Buld Run | Manual CRUD for Dataset | 
-| batch_run_rename_column | Renamed a column in the dataset | Buld Run | Manual CRUD for Dataset | 
-| batch_run_cancel | Canceled an ongoing batch run | Buld Run | Cancel Running for Dataset |
+| batch_run_import_dataset | Imported a dataset for batch run | Bulk Run | Import Dataset |
+| batch_run_select_dataset | Selected dataset for batch processing | Bulk Run | Select Dataset |
+| batch_run_export_dataset | Exported dataset used in batch run | Bulk Run | Export Dataset |
+| batch_run_row | Processed a row in batch mode | Bulk Run | Run Dataset |
+| batch_run_generate_dataset | Generated a dataset for batch run | Bulk Run | Generate Dataset |
+| batch_run_get_rows | Retrieved dataset rows for processing | Bulk Run | View Dataset |
+| batch_run_add_row | Manually added a new row to dataset | Bulk Run | Manual CRUD for Dataset | 
+| batch_run_edit_row | Manually edited an existing row | Bulk Run | Manual CRUD for Dataset | 
+| batch_run_delete_row | Deleted a row from the dataset | Bulk Run | Manual CRUD for Dataset | 
+| batch_run_insert_column | Inserted a new column into dataset | Bulk Run | Manual CRUD for Dataset | 
+| batch_run_remove_column | Removed a column from dataset | Bulk Run | Manual CRUD for Dataset | 
+| batch_run_rename_column | Renamed a column in the dataset | Bulk Run | Manual CRUD for Dataset | 
+| batch_run_cancel | Canceled an ongoing batch run | Bulk Run | Cancel Running for Dataset |
 | open_tracing_viewer | Open Tracing Viewer | Tracing | Tracing |
 | start_tracing_collector | Start Tracing Collector | Tracing | Tracing |
 | stop_tracing_collector | Stop Tracing Collector | Tracing | Tracing |
@@ -403,6 +403,7 @@ aitoolkit_vscode
 - Data refresh is **daily** with ~2-hour delay.
 - Always use `ServerTimestamp` to identify when AITK event happens. 
 - When calculating floating-point numbers (such as rates or percentages), use the `round()` function with **2 decimal places** by default.
+- Always analysis external users by default, identified by "IsInternal == false", unless the user specify to include internal users. 
 
 # AI Toolkit for Visual Studio Code – Product and Data Overview [END]
 
