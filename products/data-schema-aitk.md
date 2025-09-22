@@ -159,7 +159,7 @@ Rules for Mapping AITK events (active events) to AITK features or AITK user beha
 | delete_model | Deleted a model from the workspace | Models | Add or edit model |
 | inference_model_load | Loaded a model into the workspace | Models | Load or connect a model | 
 | inference_model_connect | Connected a model for inference | Models | Load or connect a model | 
-| inference_model_run | Ran a model inference request | Models | Run a model | 
+| inference_model_run | Ran a model inference request. The explicit event of which model is used. | Models | Run a model | 
 | model_lab_open_workflow | Opened the workflow in Model-Lab | Model-Lab | Open Model-Lab | 
 | model_lab_open_workflow-start | Opened the workflow (start event) | Model-Lab | Open Model-Lab | 
 | model_lab_open_create_workspace | Opened workspace creation dialog | Model-Lab | Create Project | 
@@ -279,7 +279,10 @@ aitoolkit_vscode
 
 ### 5.7 Get the Name, Type and Provider for Models
 
-Get the model name, model type (local vs remote) and model provider
+Get the information of model:
+    - **Model name** (model_name): The name of model.
+    - **Model type** (model_type): Indicating whether the model is local or remote model. 
+    - **Model provider** (model_provider): The provider of the model.
 
 ```kusto
 // Define GitHub early-release models list. 
@@ -399,6 +402,7 @@ aitoolkit_vscode
 - All timestamps are in **UTC**.
 - Data refresh is **daily** with ~2-hour delay.
 - Always use `ServerTimestamp` to identify when AITK event happens. 
+- When calculating floating-point numbers (such as rates or percentages), use the `round()` function with **2 decimal places** by default.
 
 # AI Toolkit for Visual Studio Code – Product and Data Overview [END]
 
