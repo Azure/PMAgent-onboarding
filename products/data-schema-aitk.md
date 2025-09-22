@@ -280,9 +280,12 @@ aitoolkit_vscode
 ### 5.7 Get the Name, Type and Provider for Models
 
 Get the information of model:
-    - **Model name** (model_name): The name of model.
-    - **Model type** (model_type): Indicating whether the model is local or remote model. 
-    - **Model provider** (model_provider): The provider of the model.
+- **Model name** (model_name): The name of model.
+- **Model provider** (model_provider): The provider of the model.
+- **Model type** (model_type): There are 3 major types: local, remote and custom. 
+    - If the model provier is `ONNX`, `ONNX (Converted)`, or `Foundry Local`, the model type is **local**. 
+    - If the model provider is `Custom`, the model type is **custom**. 
+    - Otherwise, the model type is **remote**.
 
 ```kusto
 // Define GitHub early-release models list. 
@@ -304,17 +307,14 @@ let earlyGHModels = dynamic([
 aitoolkit_vscode
 | extend model_name = tostring(Properties["model-name"])
 | where isnotempty(model_name)
-| extend model_type = iff(
-    model_name endswith "-onnx" or model_name endswith "-cpu" or model_name endswith "-gpu",
-    "local",
-    "remote"
-)
-| extend model_provider = iff(
-    tostring(Properties["model-provider"]) != "", tostring(Properties["model-provider"]),
-    iff(model_type == "local", "ONNX",
-        iff(model_name in (earlyGHModels), "GitHub", "")
-    )
-)
+| extend model_provider = iff(tostring(Properties["model-provider"]) != "", 
+                              tostring(Properties["model-provider"]), 
+                              iff(tostring(Properties["model-name"]) endswith "-onnx" or tostring(Properties["model-name"]) endswith "-cpu" or tostring(Properties["model-name"]) endswith "-gpu", 
+                                  "ONNX", 
+                                  iff(model_name in (earlyGHModels), "GitHub", "")))
+| extend model_type = iff(model_provider in ("ONNX", "ONNX (Converted)", "Foundry Local"), 
+                         'local', 
+                         iff(model_provider in ("Custom"), 'custom', 'remote'))
 ```
 
 ### 5.8 Get User Actions of Playgournd 
