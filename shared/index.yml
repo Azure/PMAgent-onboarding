@@ -62,3 +62,15 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "SignalR and Web PubSub telemetry and business reporting for PMAgent enabling OKR/ARR, AI cohort growth, usage KPIs (revenue, connections, messages), service-type growth, feature tracking (replicas, auto-scale, Blazor Server, Aspire), external/billable focus with internal exclusions, top customers, labels/retention snapshots, and QoS/Manage/Runtime metrics."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
+  roles:
+    - signalr.admin
