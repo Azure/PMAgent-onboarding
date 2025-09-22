@@ -62,3 +62,12 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_and_webpubsub_topic
+  description: "Combined schema for Azure SignalR Service and Azure Web PubSub Service used by PMAgent to power OKR (ARR, consumption), usage (revenue, connections, messages), subscriptions/resources, feature tracking, QoS, and Management API QoS analytics."
+  tags:
+    - signalr
+    - webpubsub
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
