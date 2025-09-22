@@ -62,3 +62,14 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: VS Code Java Upgrade
+  id: vscode_java_upgrade_topic
+  description: "VS Code Java Upgrade extension telemetry schema and Kusto playbook for analyzing upgrade sessions, funnels, outcomes, errors, and token usage."
+  tags:
+    - vscode
+    - java
+    - java upgrade
+    - extension
+    - vscjava.vscode-java-upgrade
+  knowledge_path:
+    - "./data-schema-vs-code-java-upgrade.md"
