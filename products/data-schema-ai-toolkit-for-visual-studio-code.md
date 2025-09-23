@@ -14,8 +14,6 @@ AI Toolkit for Visual Studio Code (AITK-VSC)
 https://kustoproxytest.azure-api.net/rentu-test-product/teamsfx
 - **Kusto Database**:
 vscode-ext-aggregate
-- **Access Control**:
-**[TODO] Data Engineer**: If this product’s data has high confidentiality concerns, please specify the allowed **groups/users** here. If left blank, general users will be permitted to run analyses on this product, including cross-product scenarios.
 
 -----
 
