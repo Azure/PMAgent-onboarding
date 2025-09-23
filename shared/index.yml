@@ -62,3 +62,12 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: VS Code Java Upgrade
+  id: vscode_java_upgrade_topic
+  description: "VS Code Java Upgrade is a Visual Studio Code extension that assists developers in upgrading Java projects. This schema enables PMAgent to analyze upgrade workflow sessions, funnels, error taxonomies, and LLM token usage."
+  tags:
+    - vscode
+    - Java
+    - java upgrade
+  knowledge_path:
+    - "./data-schema-vs-code-java-upgrade.md"
