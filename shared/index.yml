@@ -62,3 +62,13 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: VS Code Java Upgrade
+  id: vscode_java_upgrade_topic
+  description: "Kusto dashboard for VS Code Java Upgrade events, funnels, errors, tool usage, and token consumption across multiple steps."
+  tags:
+    - vscode
+    - java
+    - upgrade
+    - extension
+  knowledge_path:
+    - "./data-schema-vs-code-java-upgrade.md"
