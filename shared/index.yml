@@ -62,3 +62,13 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "SignalR and Web PubSub product schema and Kusto playbook for PMAgent onboarding. Covers SignalR Service, Web PubSub, and Socket.IO variants with conventions, completeness gates, cohort logic, and canonical tables."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
