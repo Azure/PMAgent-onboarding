@@ -53,11 +53,6 @@ assignees: ''
 
 > #onboard <Link to specific comment in GitHub issue>
 
-- [ ] Complete all **[TODO]Data_Engineer** actions in the PR, and then submit PR. 
-
-  - **Product Nick Names**: Provide commonly used short names/abbreviations to help PMAgent match user conversations to the right product.
-  - **Special business rules, metric logic, and filters**: Confirm any non-standard gating, success definitions, version filters, and cohort rules that should be consistently applied across analyses.
-
-- [ ] Review and contribute to the [shared data hygiene](https://github.com/Azure/PMAgent-onboarding/blob/bot/ai-toolkit-for-visual-studio-code-1758596211/shared/data_hygiene.yml) to ensure coverage of your product.
+- [ ] Complete all **[TODO]Data_Engineer** actions for data engineering and **data hygiene** updates as the PR guidance, and then submit PR. 
 
 - [ ] Continue opimizing your product knowledge with PRs in future. 
