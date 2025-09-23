@@ -9,8 +9,7 @@ AI Toolkit for Visual Studio Code (AITK-VSC) provides capabilities for local and
 - **Data Storage**: Azure Data Explorer (ADX)
 - **Product**:
 AI Toolkit for Visual Studio Code (AITK-VSC)
-- **Product Nick Names**:
-**[TODO]Data_Engineer**: Fill in commonly used short names or abbreviations for the product to help PMAgent accurately recognize the target product from user conversations.
+- **Product Nick Names**: AITK, AI Toolkit
 - **Kusto Cluster**:
 https://kustoproxytest.azure-api.net/rentu-test-product/teamsfx
 - **Kusto Database**:
