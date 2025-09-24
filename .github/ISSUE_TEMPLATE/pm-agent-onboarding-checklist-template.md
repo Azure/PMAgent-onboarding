@@ -25,7 +25,10 @@ assignees: ''
      ```kusto
     .add database Samples viewers ('aadapp=2edc5bb8-8658-4c23-b808-b7fda3be7428;72f988bf-86f1-41af-91ab-2d7cd011db47')
 
-- [ ] Share security groups with the PM Agent team to manage which teams can access your product telemetry through PM Agent.
+- [ ] Share your security groups with the PM Agent team to control which teams can access your product telemetry through PM Agent.  To share your security groups, add a new comment with security groups to this issue and mention `zackliu` or `JialinXin`.
+
+> [!IMPORTANT] 
+> By default, if no specific security group is configured, all PM Agent users will have access to your product telemetry.
 
 ## Setup PM Agent in Microsoft Teams
 
@@ -49,10 +52,14 @@ assignees: ''
 
 - [ ] Create a [GitHub issue](https://github.com/Azure/PMAgent-onboarding/issues/new?template=pm-agent-queries-template.md) to upload the resources you prepared, and copy the URL of this issue. 
 
-- [ ] Go to PM agent and ask PM agent to generate product knowledge with the URL of GitHb issue for product resources. PM agent will help you create a PR for initial product knowledge.
+- [ ] Go to PM agent and send following message to PM agent to generate product knowledge. PM agent will help you create a PR for initial product knowledge.
 
-> #onboard <Link to specific comment in GitHub issue>
+> #onboard [URL of GitHb issue comment for product resources] 
 
-- [ ] Complete all **[TODO]Data_Engineer** actions for data engineering and **data hygiene** updates as the PR guidance, and then submit PR. 
+- [ ] Review and submit the product knowledge PR. 
 
-- [ ] Continue opimizing your product knowledge with PRs in future. 
+  - Complete all **[TODO]Data_Engineer** actions for data engineering.
+  - Update **data hygiene** as the PR guidance, if necessary.
+  - Review the initial product knowledge and update it if necessary.
+
+- [ ] Continue opimizing your product knowledge with PRs in future, if there is any new changes of telemetry.
