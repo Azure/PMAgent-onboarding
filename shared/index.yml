@@ -62,3 +62,15 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "Unified analytics schema for Azure SignalR Service (ASRS) and Azure Web PubSub (AWPS), enabling PMAgent to interpret billing, usage, QoS, features, retention, and OKR metrics across both services (including SocketIO)."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
+  roles:
+    - signalr.admin
