@@ -26,7 +26,7 @@
     - ai Toolkit
     - aitk
   knowledge_path:
-    - "./data-schema-aitk.md"
+    - "./data-schema-ai-toolkit-for-visual-studio-code.md"
 - name: Azure AI Foundry for Visual Studio Code
   id: aifoundry_topic
   description: "With the Azure AI Foundry for Visual Studio Code extension (a.k.a. AI Foundry extension) you can easily deploy Large Language Models, develop AI applications, develop with Agents, and more with Azure AI Foundry from the Visual Studio Code interface."
