@@ -62,3 +62,13 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: VS Code Java Upgrade
+  id: vscode_java_upgrade_topic
+  description: "VS Code Java Upgrade (extension id: vscjava.vscode-java-upgrade) helps developers upgrade Java projects in Visual Studio Code, including planning, OpenRewrite transformations, build fix, CVE validation, and consistency checks."
+  tags:
+    - VS Code
+    - Java
+    - java upgrade
+    - vscode extension
+  knowledge_path:
+    - "./data-schema-vs-code-java-upgrade.md"
