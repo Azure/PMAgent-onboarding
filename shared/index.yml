@@ -62,3 +62,13 @@
     - acat
   knowledge_path:
     - "./data-schema-acat.md"
+- name: 2023 New OKR 2.2: F5 success rate
+  id: teamsfx_f5_success_rate_topic
+  description: "Measure and report TeamsFx F5 (local debug) success rate across VS Code, CLI, and Visual Studio, sliced by version and project type; normalize session timelines, classify errors, and compute first success to determine if a project is blocked or successful."
+  tags:
+    - teamsfx
+    - f5
+    - debug
+    - success rate
+  knowledge_path:
+    - "./data-schema-2023-new-okr-2-2-f5-success-rate.md"
