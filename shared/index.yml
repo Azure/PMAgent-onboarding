@@ -67,8 +67,9 @@
   description: "Measure and report TeamsFx F5 (local debug) success rate across VS Code, CLI, and Visual Studio, sliced by version and project type; normalize session timelines, classify errors, and compute first success to determine if a project is blocked or successful."
   tags:
     - teamsfx
-    - f5
-    - debug
-    - success rate
+    - atk
+    - matk
+    - m365 agents toolkit
+    - agents toolkit
   knowledge_path:
     - "./data-schema-microsoft-365-agents-toolkit.md"
