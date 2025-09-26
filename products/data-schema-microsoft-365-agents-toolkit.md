@@ -1,8 +1,8 @@
-# 2023 New OKR 2.2: F5 success rate - Product and Data Overview Template
+# Microsoft 365 Agents Toolkit - Product and Data Overview Template
 
 ## 1. Product Overview
 
-This schema defines how PMAgent should interpret telemetry and compute the “F5 (local debug) success rate” for TeamsFx across clients. Product scope: 2023 New OKR 2.2: F5 success rate.
+This schema defines how PMAgent should interpret telemetry Microsoft 365 Agents Toolkit, e.g., computing the “F5 (local debug) success rate” for TeamsFx across clients. 
 
 - Objective: Measure and report TeamsFx F5 success rate across VS Code (VSC), CLI, and Visual Studio (VS), sliced by version and project type. Normalize session timelines, classify errors, and compute first success to determine if a project is blocked or successful.
 - Notes: Timezone assumed UTC unless explicitly adjusted; adopt a 3-day completeness gate from first debug to avoid premature classification.
@@ -10,20 +10,18 @@ This schema defines how PMAgent should interpret telemetry and compute the “F5
 ## 2. Data Platform Overview
 
 - Data Storage: Azure Data Explorer (ADX)
-- Product: 2023 New OKR 2.2: F5 success rate
-- Product Nick Names:
-  - [TODO]Data_Engineer: Fill in commonly used short names or abbreviations (e.g., “F5 Success Rate”, “TeamsFx F5 SR”, “TTK F5”).
-- Kusto Cluster: unknown
-- Kusto Database: unknown
-- Access Control:
-  - [TODO]Data_Engineer: If this product’s data has high confidentiality concerns, specify the allowed groups/users. If left blank, general users will be permitted to run analyses on this product, including cross-product scenarios.
+- Product: Microsoft 365 Agents Toolkit
+- Product Nick Names: TeamsFx, M365 Agents Toolkit, ATK, MATK
+- Kusto Cluster: https://kustoproxytest.azure-api.net/rentu-test-product/teamsfx
+- Kusto Database: vscode-ext-aggregate
+- Access Control: N/A
 
 -----
 
-# 2023 New OKR 2.2: F5 success rate - Kusto Query Playbook
+# Microsoft 365 Agents Toolkit - Kusto Query Playbook
 
 ## Overview
-- Product: 2023 New OKR 2.2: F5 success rate
+- Product: Microsoft 365 Agents Toolkit
 - Summary: Measure and report TeamsFx “F5” (local debug) success rate across clients (VS Code, CLI, Visual Studio), sliced by version and project type. Normalize session timelines, classify errors, and compute “first success” to determine if a project is blocked or successful.
 - Cluster: unknown
 - Database: unknown
