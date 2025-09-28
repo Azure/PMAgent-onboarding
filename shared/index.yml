@@ -73,3 +73,11 @@
     - agents toolkit
   knowledge_path:
     - "./data-schema-microsoft-365-agents-toolkit.md"
+- name: Java App Modernization
+  id: java_app_modernization_topic
+  description: "Java App Modernization playbook and schema; telemetry not yet connected. This topic documents conventions and templates to author Kusto queries once data is available."
+  tags:
+    - Java
+    - modernization
+  knowledge_path:
+    - "./data-schema-java-app-modernization.md"
