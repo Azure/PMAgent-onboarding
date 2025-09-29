@@ -66,7 +66,7 @@ assignees: ''
         ```
 
         - Select `Export` -> `Export to CSV` to download the result. 
-        - Paste the fcuntions with KQL syntax in markdown, and update each function **with proper comments** to the PM Agent understand them. 
+        - Paste the functions with KQL syntax in markdown, and update each function **with proper comments** to the PM Agent understand them. 
             - You could also use the following prompts to ask AI to help you clean up the functions. 
 
         ```markdown
@@ -111,7 +111,7 @@ assignees: ''
 
 ### **Product Resource Type**
 
-- [ ] ADX Dahsboard (json content)
+- [ ] ADX Dashboard (json content)
 - [ ] Power BI dashboard (queries in markdown)
 - [ ] Lens Explorer (queries in markdown) 
 - [ ] KQL Functions (functions in markdown) 
