@@ -73,3 +73,13 @@
     - agents toolkit
   knowledge_path:
     - "./data-schema-microsoft-365-agents-toolkit.md"
+- name: VS Code Java Upgrade
+  id: vs_code_java_upgrade_topic
+  description: "Visual Studio Code extension that assists Java upgrade planning, rewriting, build fixing, CVE validation, and consistency checks; telemetry schema and Kusto playbook for PMAgent onboarding."
+  tags:
+    - vscode
+    - java upgrade
+    - vscjava
+    - upgrade
+  knowledge_path:
+    - "./data-schema-vs-code-java-upgrade.md"
