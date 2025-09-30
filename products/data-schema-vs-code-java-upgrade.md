@@ -6,17 +6,17 @@
 
 ## 2. Data Platform Overview
 
-- **Data Storage**: Azure Data Explorer (ADX)
-- **Product**:
+- Data Storage: Azure Data Explorer (ADX)
+- Product:
 > VS Code Java Upgrade
-- **Product Nick Names**: 
-> **[TODO]Data_Engineer**: Fill in commonly used short names or abbreviations for the product to help PMAgent accurately recognize the target product from user conversations. Examples: "Java Upgrade", "VSCode Java Upgrade", "Java Migration".
-- **Kusto Cluster**:
+- Product Nick Names: 
+> [TODO]Data_Engineer: Fill in commonly used short names or abbreviations for the product to help PMAgent accurately recognize the target product from user conversations. Examples: "Java Upgrade", "VSCode Java Upgrade", "Java Migration".
+- Kusto Cluster:
 > https://ddtelvscode.kusto.windows.net/
-- **Kusto Database**:
+- Kusto Database:
 > VSCodeExt
-- **Access Control**:
-> **[TODO] Data Engineer**: If this product’s data has high confidentiality concerns, please specify the allowed **groups/users** here. If left blank, general users will be permitted to run analyses on this product, including cross-product scenarios.
+- Access Control:
+> [TODO] Data Engineer: If this product’s data has high confidentiality concerns, please specify the allowed groups/users here. If left blank, general users will be permitted to run analyses on this product, including cross-product scenarios.
 
 -----
 
@@ -130,6 +130,46 @@ cluster("ddtelvscode.kusto.windows.net").database("VSCodeExt").RawEventsVSCodeEx
   - VSCode Agent Token Usage Per Session
   - Confirm/OpenRewrite/BuildFix/CVE/Consistency stage KPIs and pies
 
+### Event Name Mapping (canonical stage dictionary)
+The following mappings consolidate the event names, their meanings, and the outcome keys used in queries. These are taken from the dashboard-derived queries in the preprocess payload and examples already present in this playbook.
+
+- Generate Plan
+  - vscjava.vscode-java-upgrade/generateplan.prepare: LLM prepares a plan. Often missing sessionId; treated as a no-session event in funnels.
+  - vscjava.vscode-java-upgrade/generateplan.start: User invokes plan generation. Often missing sessionId; treated as a no-session event in funnels.
+  - vscjava.vscode-java-upgrade/generateplan.end: Plan generation completes (or produces an error). Outcome signals via Properties["errormessage"] for error grouping.
+- Confirm Plan
+  - vscjava.vscode-java-upgrade/confirmplan.prepare: LLM prepares confirm step; contributes to session counts when sessionId present.
+  - vscjava.vscode-java-upgrade/confirmplan.start: Begin confirm step; counted via dcount(sessionId) in tiles.
+  - vscjava.vscode-java-upgrade/confirmplan.end: Plan created/confirmed; this is the canonical seed for session cohorts in the result view (captures startTime).
+  - vscjava.vscode-java-upgrade/confirmplan.failed: Explicit failure record; errors categorized via Properties["errormessage"].
+- OpenRewrite
+  - vscjava.vscode-java-upgrade/openrewrite.prepare and .../start: Tool run begins; used for session counts and drop-off analysis.
+  - vscjava.vscode-java-upgrade/openrewrite.end: Tool completed; Properties["result"] in {"succeed","failed"} determines outcome; failures mapped as OpenResultFailed in result view.
+- Build Fix
+  - vscjava.vscode-java-upgrade/buildfix.prepare and .../start: Build Fix flow begins.
+  - vscjava.vscode-java-upgrade/buildfix.end: Terminal outcome; Properties["result"] == "true" → Succeeded, else BuildFixFailed.
+- Build Project (auxiliary)
+  - vscjava.vscode-java-upgrade/buildproject.prepare/start/end: Build project run observed in funnel event sets; not central to result logic but appears before validation flows in some dashboards.
+- CVE Validation
+  - vscjava.vscode-java-upgrade/validatecves.prepare and .../start: Start CVE validation.
+  - vscjava.vscode-java-upgrade/validatecves.end: Terminal outcome; Properties["cves"] empty → “CVE Validation Passed”, otherwise CVEs found.
+- Consistency Validation
+  - vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.prepare and .../start: Start behavioral consistency checks.
+  - vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end: Terminal outcome; Measures["behaviorchangescount"] == 0 and Measures["brokenfilescount"] == 0 → “Consistency Validation Passed”.
+- Summarize Step
+  - Summarization events appear as either vscjava.vscode-java-upgrade/summarizeupgrade.start/end (used in example queries) or summarizechanges.start/prepare/end (listed in funnel order). Treat both prefixes as the summarization stage; no explicit outcome key.
+- LLM Client (extension tool calls)
+  - vscjava.vscode-java-upgrade/llmclient.sendrequest: Individual LLM tool invocation; Measures["tokens"], ["prompttoken"], ["completiontoken"]; Properties["caller"] identifies tool component. Aggregated per session for token and call-count metrics.
+- Agent (Copilot Chat)
+  - github.copilot-chat/panel.request: Chat requests; Properties["toolcounts"] contains tool usage; filter conversations where toolcounts has "javaupgrade".
+  - github.copilot-chat/response.success: Chat responses; Measures["tokencount"] used to compute per-conversation token totals.
+- Dependency Planning
+  - vscjava.vscode-java-upgrade/javaupgrade.planstarted: Emits planned dependency upgrades; Properties["updateddependencies"] is a JSON array parsed in the updatedependencies view.
+
+Notes
+- Sessionless events: The funnel treats generateplan.prepare/start/end as noSessionEvents. Do not use these to count sessions; keep them for user count or informational ratios only.
+- Error text: Properties["errormessage"] is the source of error grouping for generateplan, confirmplan, openrewrite.
+
 ## Entity & Counting Rules (Core Definitions)
 - Entities:
   - User: DevDeviceId (preferred due to join to fact_user_isinternal); VSCodeMachineId also used—align and be consistent per analysis
@@ -226,8 +266,8 @@ cluster("ddtelvscode.kusto.windows.net").database("VSCodeExt").RawEventsVSCodeEx
     | distinct sessionId;
     let failedTask1 = raw
     | extend taskId = tostring(Properties["taskid"])
-    | extend task = toint(split(taskId, ".")[0]),
-             subTask = toint(split(taskId, ".")[1])
+    | extend task = toint(split(taskId, ".", 0)[0]),
+             subTask = toint(split(taskId, ".", 1)[0])
     | where isnotempty(subTask)
     | summarize max(task) by sessionId
     | where max_task == 1
@@ -342,7 +382,7 @@ cluster("ddtelvscode.kusto.windows.net").database("VSCodeExt").RawEventsVSCodeEx
     | mv-expand dep = deps
     | project sourceId = tostring(dep["source"]["id"]),
              sourceVer = tostring(dep["source"]["version"]),
-             targetVer = tostring(dep["target"]["version"])
+             targetVer = tostring(dep["target"]["version"]) 
 
     // Version split
     | extend majorVersion = toint(split(ExtensionVersion, ".", 0)[0]),
