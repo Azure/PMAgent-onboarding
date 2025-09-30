@@ -170,113 +170,6 @@ Notes
 - Sessionless events: The funnel treats generateplan.prepare/start/end as noSessionEvents. Do not use these to count sessions; keep them for user count or informational ratios only.
 - Error text: Properties["errormessage"] is the source of error grouping for generateplan, confirmplan, openrewrite.
 
-## Entity & Counting Rules (Core Definitions)
-- Entities:
-  - User: DevDeviceId (preferred due to join to fact_user_isinternal); VSCodeMachineId also used—align and be consistent per analysis
-  - Session: Properties["sessionid"] projected as sessionId; VSCodeSessionId used for chat-related queries
-  - Version: ExtensionVersion split into majorVersion, minorVersion; also composite version string "major.minor"
-- Grouping levels:
-  - By EventName for step funnels
-  - By buildTool, sourceVersion→targetVersion
-  - By result status (Succeeded/Failed/Incomplete)
-- Business definitions from queries:
-  - Build Fix Succeeded: buildfix.end with Properties["result"] == "true"
-  - Open Rewrite Succeeded/Failed: openrewrite.end with Properties["result"] in {"succeed","failed"}
-  - CVE Validation Passed: validatecves.end with Properties["cves"] empty
-  - Consistency Validation Passed: validatecodebehaviorconsistency.end with Measures["behaviorchangescount"] == 0 and Measures["brokenfilescount"] == 0
-  - Incomplete (post-confirm): confirmplan.end with neither build fix nor open rewrite signals leading to a terminal success/failure
-- Counting dos/don’ts:
-  - Do use dcount(sessionId) for session KPIs
-  - Do use dcount(DevDeviceId) or dcount(VSCodeMachineId) consistently for “unique users”—prefer DevDeviceId if you need IsInternal
-  - Don’t mix VSCodeSessionId (agent/chat) with upgrade sessionId without clear intent
-  - Don’t count “noSessionEvents” as sessions (e.g., some generateplan events are marked as noSessionEvents in funnel logic)
-
-## Views (Reusable Layers)
-
-- raw (base)
-  - Purpose: Central filter/normalization layer with time window, version gating, internal-user join, and sessionId derivation
-  - Query:
-    ```kusto
-    let base = database("VSCodeExt").RawEventsVSCodeExt
-    | where ExtensionName == "vscjava.vscode-java-upgrade"
-    | where tostring(Properties["sessionid"]) != "MOCKSESSION"
-    | where ServerTimestamp between (['_startTime'] .. ['_endTime']) // Time range filtering
-    | extend majorVersion = toint(split(ExtensionVersion, ".", 0)[0]),
-             minorVersion = toint(split(ExtensionVersion, ".", 1)[0])
-    | where majorVersion > 0 or minorVersion >= 10
-    | join kind=inner (database("VSCodeInsights").fact_user_isinternal) on DevDeviceId;
-    base
-    | where isempty(['_versions']) or ExtensionVersion in (['_versions']) // Multiple selection filtering
-    // regard all users before code complete as internal users
-    | where isempty(['_user_types']) or IsInternal in ( ['_user_types'])
-    | extend sessionId = tostring(Properties["sessionid"])
-    ```
-  - Inputs: RawEventsVSCodeExt, fact_user_isinternal
-  - Outputs: Filtered events with sessionId, version fields, IsInternal
-
-- result
-  - Purpose: Compute per-session terminal result across OpenRewrite and Build Fix
-  - Query:
-    ```kusto
-    let all = raw
-    | where EventName == "vscjava.vscode-java-upgrade/confirmplan.end"
-    | distinct VSCodeMachineId, startTime = ServerTimestamp, sessionId, majorVersion, minorVersion;
-    let openRewriteFailedResults = raw
-    | where EventName ==  "vscjava.vscode-java-upgrade/openrewrite.end" and Properties["result"] == "failed"
-    | distinct VSCodeMachineId, sessionId, majorVersion, minorVersion
-    | project sessionId, orResult = "OpenResultFailed";
-    let buildFixResult = raw
-    | where EventName == "vscjava.vscode-java-upgrade/buildfix.end"
-    | extend buildResult = iff(Properties["result"] == "true", "Succeeded", "BuildFixFailed")
-    | distinct VSCodeMachineId, sessionId, majorVersion, minorVersion, buildResult
-    | project sessionId, buildResult;
-    all
-    | join kind=leftouter openRewriteFailedResults on sessionId
-    | join kind=leftouter buildFixResult on sessionId
-    | extend result = case(isnotempty(buildResult), buildResult, isnotempty(orResult), orResult, "Incomplete")
-    | project VSCodeMachineId, startTime, sessionId, result, majorVersion, minorVersion, version = strcat(majorVersion, ".", minorVersion)
-    ```
-  - Depends on: raw
-
-- updatedependencies
-  - Purpose: Extract planned dependency upgrades per session
-  - Query:
-    ```kusto
-    raw
-    | where EventName == "vscjava.vscode-java-upgrade/javaupgrade.planstarted"
-    | extend dependencies = parse_json(tostring(Properties["updateddependencies"])),
-             session = tostring(Properties["sessionid"])
-    | project dependencies, session
-    | mv-expand dependencies
-    | project dependency = tostring(dependencies["source"]["id"]),
-             source = tostring(dependencies["source"]["version"]),
-             target = tostring(dependencies["target"]["version"]),
-             session
-    ```
-  - Depends on: raw
-
-- compileFailedSessions
-  - Purpose: Identify sessions failing task 1 without OpenRewrite failure
-  - Query:
-    ```kusto
-    let openrewriteFailed = raw
-    | extend outputMessage = tostring(Properties["output.message"])
-    | extend sessionid = tostring(Properties["sessionid"])
-    | where outputMessage has "Failed to run OpenRewrite"
-    | distinct sessionId;
-    let failedTask1 = raw
-    | extend taskId = tostring(Properties["taskid"])
-    | extend task = toint(split(taskId, ".", 0)[0]),
-             subTask = toint(split(taskId, ".", 1)[0])
-    | where isnotempty(subTask)
-    | summarize max(task) by sessionId
-    | where max_task == 1
-    | distinct sessionId;
-    failedTask1
-    | join kind=leftantisemi openrewriteFailed on sessionId
-    ```
-  - Depends on: raw
-
 ## Query Building Blocks (Copy-paste snippets, contains snippets and description)
 
 - Time window template
@@ -399,6 +292,161 @@ Notes
     | extend sessionId = tostring(Properties["sessionid"])
     | project-rename Time = ServerTimestamp
     | summarize dcount(sessionId) by bin(Time, 1d), TableName
+    ```
+
+- Event Intent Groupings (Reusable KQL Sets)
+  - Description: Structured event groups by stage and purpose to make funnels, cohorts, terminal outcomes, error classification, and token accounting easier to build and reuse.
+  - Snippet:
+    ```kusto
+    // Canonical stage order for session progression (post-confirm)
+    let StageOrderBySession = dynamic([
+      "ConfirmPlan",
+      "OpenRewrite",
+      "BuildFix",
+      "CVE",
+      "Consistency",
+      "Summarize"
+    ]);
+
+    // Session hygiene
+    let NoSessionEvents = dynamic([
+      "vscjava.vscode-java-upgrade/generateplan.prepare",
+      "vscjava.vscode-java-upgrade/generateplan.start",
+      "vscjava.vscode-java-upgrade/generateplan.end"
+    ]);
+
+    // Cohort seed: use confirmplan.end as session cohort starting point
+    let CohortSeedEvents = dynamic([
+      "vscjava.vscode-java-upgrade/confirmplan.end"
+    ]);
+
+    // Stage groupings (prepare/start/end)
+    let Events_GeneratePlan = dynamic([
+      "vscjava.vscode-java-upgrade/generateplan.prepare",
+      "vscjava.vscode-java-upgrade/generateplan.start",
+      "vscjava.vscode-java-upgrade/generateplan.end"
+    ]);
+    let Events_ConfirmPlan = dynamic([
+      "vscjava.vscode-java-upgrade/confirmplan.prepare",
+      "vscjava.vscode-java-upgrade/confirmplan.start",
+      "vscjava.vscode-java-upgrade/confirmplan.end",
+      "vscjava.vscode-java-upgrade/confirmplan.failed"
+    ]);
+    let Events_OpenRewrite = dynamic([
+      "vscjava.vscode-java-upgrade/openrewrite.prepare",
+      "vscjava.vscode-java-upgrade/openrewrite.start",
+      "vscjava.vscode-java-upgrade/openrewrite.end"
+    ]);
+    let Events_BuildFix = dynamic([
+      "vscjava.vscode-java-upgrade/buildfix.prepare",
+      "vscjava.vscode-java-upgrade/buildfix.start",
+      "vscjava.vscode-java-upgrade/buildfix.end"
+    ]);
+    let Events_BuildProject = dynamic([
+      "vscjava.vscode-java-upgrade/buildproject.prepare",
+      "vscjava.vscode-java-upgrade/buildproject.start",
+      "vscjava.vscode-java-upgrade/buildproject.end"
+    ]);
+    let Events_CVE = dynamic([
+      "vscjava.vscode-java-upgrade/validatecves.prepare",
+      "vscjava.vscode-java-upgrade/validatecves.start",
+      "vscjava.vscode-java-upgrade/validatecves.end"
+    ]);
+    let Events_Consistency = dynamic([
+      "vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.prepare",
+      "vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.start",
+      "vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end"
+    ]);
+    let Events_Summarize = dynamic([
+      // Both summarizeupgrade.* and summarizechanges.* are used in source queries
+      "vscjava.vscode-java-upgrade/summarizeupgrade.start",
+      "vscjava.vscode-java-upgrade/summarizeupgrade.end",
+      "vscjava.vscode-java-upgrade/summarizechanges.start",
+      "vscjava.vscode-java-upgrade/summarizechanges.prepare",
+      "vscjava.vscode-java-upgrade/summarizechanges.end"
+    ]);
+
+    // LLM & Agent groups
+    let Events_LLMClient = dynamic(["vscjava.vscode-java-upgrade/llmclient.sendrequest"]);
+    let Events_Agent_Request = dynamic(["github.copilot-chat/panel.request"]);
+    let Events_Agent_Response = dynamic(["github.copilot-chat/response.success"]);
+
+    // Terminal outcome predicates (reusable conditions)
+    let OpenRewriteSucceeded = (tostring(Properties["result"]) == "succeed");
+    let OpenRewriteFailed = (tostring(Properties["result"]) == "failed");
+    let BuildFixSucceeded = (tostring(Properties["result"]) == "true");
+    let CvePassed = isempty(tostring(Properties["cves"]));
+    let ConsistencyPassed = toint(Measures["behaviorchangescount"]) == 0 and toint(Measures["brokenfilescount"]) == 0;
+
+    // Usage patterns
+    // 1) Count sessions within a stage group
+    raw
+    | where EventName in (Events_OpenRewrite)
+    | summarize sessions = dcount(sessionId) by EventName
+
+    // 2) Terminal success filters per stage
+    raw
+    | where EventName == "vscjava.vscode-java-upgrade/openrewrite.end" and OpenRewriteSucceeded
+    | summarize successSessions = dcount(sessionId)
+
+    raw
+    | where EventName == "vscjava.vscode-java-upgrade/buildfix.end" and BuildFixSucceeded
+    | summarize successSessions = dcount(sessionId)
+
+    raw
+    | where EventName == "vscjava.vscode-java-upgrade/validatecves.end"
+    | summarize passedSessions = dcountif(sessionId, CvePassed)
+
+    raw
+    | where EventName == "vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end"
+    | summarize passedSessions = dcountif(sessionId, ConsistencyPassed)
+
+    // 3) Cohort seed → terminal outcome join using grouped terminals
+    let cohort = raw
+    | where EventName in (CohortSeedEvents)
+    | distinct sessionId;
+
+    let terminals = raw
+    | where EventName in (pack_array(
+        "vscjava.vscode-java-upgrade/openrewrite.end",
+        "vscjava.vscode-java-upgrade/buildfix.end",
+        "vscjava.vscode-java-upgrade/validatecves.end",
+        "vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end"))
+    | project sessionId,
+              any_or_succeeded = iif(EventName == "vscjava.vscode-java-upgrade/openrewrite.end" and OpenRewriteSucceeded, 1, 0),
+              any_bf_succeeded = iif(EventName == "vscjava.vscode-java-upgrade/buildfix.end" and BuildFixSucceeded, 1, 0),
+              any_cve_passed   = iif(EventName == "vscjava.vscode-java-upgrade/validatecves.end" and CvePassed, 1, 0),
+              any_consistency_passed = iif(EventName == "vscjava.vscode-java-upgrade/validatecodebehaviorconsistency.end" and ConsistencyPassed, 1, 0)
+    | summarize any_or = max(any_or_succeeded),
+                any_bf = max(any_bf_succeeded),
+                any_cve = max(any_cve_passed),
+                any_consistency = max(any_consistency_passed) by sessionId;
+
+    cohort
+    | join kind=leftouter terminals on sessionId
+    | extend result = case(
+        any_bf == 1, "Succeeded",
+        any_or == 1, "OpenRewriteSucceeded",
+        any_bf == 0 and any_or == 0 and (any_cve == 1 and any_consistency == 1), "ValidatedNoBuild",
+        "Incomplete"
+      )
+    | summarize sessions = dcount(sessionId) by result
+
+    // 4) Error sources grouped by intention
+    let ErrorSources = dynamic([
+      // Generate/Confirm errors are grouped in existing examples via errormessage
+      "vscjava.vscode-java-upgrade/generateplan.prepare",
+      "vscjava.vscode-java-upgrade/generateplan.start",
+      "vscjava.vscode-java-upgrade/generateplan.end",
+      "vscjava.vscode-java-upgrade/confirmplan.failed",
+      // OpenRewrite end carries explicit failure outcome
+      "vscjava.vscode-java-upgrade/openrewrite.end"
+    ]);
+    raw
+    | where EventName in (ErrorSources)
+    | extend error = tostring(Properties["errormessage"]), outcome = tostring(Properties["result"]) 
+    | where isnotempty(error) or outcome == "failed"
+    | summarize Count = count(), Users = dcount(DevDeviceId) by EventName, error
     ```
 
 ## Example Queries (with explanations)
