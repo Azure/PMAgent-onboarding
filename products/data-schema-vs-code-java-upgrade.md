@@ -170,6 +170,92 @@ Notes
 - Sessionless events: The funnel treats generateplan.prepare/start/end as noSessionEvents. Do not use these to count sessions; keep them for user count or informational ratios only.
 - Error text: Properties["errormessage"] is the source of error grouping for generateplan, confirmplan, openrewrite.
 
+## Views (Reusable Layers)
+
+- raw (base)
+  - Purpose: Central filter/normalization layer with time window, version gating, internal-user join, and sessionId derivation
+  - Query:
+    ```kusto
+    let base = database("VSCodeExt").RawEventsVSCodeExt
+    | where ExtensionName == "vscjava.vscode-java-upgrade"
+    | where tostring(Properties["sessionid"]) != "MOCKSESSION"
+    | where ServerTimestamp between (['_startTime'] .. ['_endTime']) // Time range filtering
+    | extend majorVersion = toint(split(ExtensionVersion, ".", 0)[0]),
+             minorVersion = toint(split(ExtensionVersion, ".", 1)[0])
+    | where majorVersion > 0 or minorVersion >= 10
+    | join kind=inner (database("VSCodeInsights").fact_user_isinternal) on DevDeviceId;
+    base
+    | where isempty(['_versions']) or ExtensionVersion in (['_versions']) // Multiple selection filtering
+    // regard all users before code complete as internal users
+    | where isempty(['_user_types']) or IsInternal in ( ['_user_types'])
+    | extend sessionId = tostring(Properties["sessionid"])
+    ```
+  - Inputs: RawEventsVSCodeExt, fact_user_isinternal
+  - Outputs: Filtered events with sessionId, version fields, IsInternal
+
+- result
+  - Purpose: Compute per-session terminal result across OpenRewrite and Build Fix
+  - Query:
+    ```kusto
+    let all = raw
+    | where EventName == "vscjava.vscode-java-upgrade/confirmplan.end"
+    | distinct VSCodeMachineId, startTime = ServerTimestamp, sessionId, majorVersion, minorVersion;
+    let openRewriteFailedResults = raw
+    | where EventName ==  "vscjava.vscode-java-upgrade/openrewrite.end" and Properties["result"] == "failed"
+    | distinct VSCodeMachineId, sessionId, majorVersion, minorVersion
+    | project sessionId, orResult = "OpenResultFailed";
+    let buildFixResult = raw
+    | where EventName == "vscjava.vscode-java-upgrade/buildfix.end"
+    | extend buildResult = iff(Properties["result"] == "true", "Succeeded", "BuildFixFailed")
+    | distinct VSCodeMachineId, sessionId, majorVersion, minorVersion, buildResult
+    | project sessionId, buildResult;
+    all
+    | join kind=leftouter openRewriteFailedResults on sessionId
+    | join kind=leftouter buildFixResult on sessionId
+    | extend result = case(isnotempty(buildResult), buildResult, isnotempty(orResult), orResult, "Incomplete")
+    | project VSCodeMachineId, startTime, sessionId, result, majorVersion, minorVersion, version = strcat(majorVersion, ".", minorVersion)
+    ```
+  - Depends on: raw
+
+- updatedependencies
+  - Purpose: Extract planned dependency upgrades per session
+  - Query:
+    ```kusto
+    raw
+    | where EventName == "vscjava.vscode-java-upgrade/javaupgrade.planstarted"
+    | extend dependencies = parse_json(tostring(Properties["updateddependencies"])),
+             session = tostring(Properties["sessionid"])
+    | project dependencies, session
+    | mv-expand dependencies
+    | project dependency = tostring(dependencies["source"]["id"]),
+             source = tostring(dependencies["source"]["version"]),
+             target = tostring(dependencies["target"]["version"]),
+             session
+    ```
+  - Depends on: raw
+
+- compileFailedSessions
+  - Purpose: Identify sessions failing task 1 without OpenRewrite failure
+  - Query:
+    ```kusto
+    let openrewriteFailed = raw
+    | extend outputMessage = tostring(Properties["output.message"])
+    | extend sessionid = tostring(Properties["sessionid"])
+    | where outputMessage has "Failed to run OpenRewrite"
+    | distinct sessionId;
+    let failedTask1 = raw
+    | extend taskId = tostring(Properties["taskid"])
+    | extend task = toint(split(taskId, ".", 0)[0]),
+             subTask = toint(split(taskId, ".", 1)[0])
+    | where isnotempty(subTask)
+    | summarize max(task) by sessionId
+    | where max_task == 1
+    | distinct sessionId;
+    failedTask1
+    | join kind=leftantisemi openrewriteFailed on sessionId
+    ```
+  - Depends on: raw
+
 ## Query Building Blocks (Copy-paste snippets, contains snippets and description)
 
 - Time window template
