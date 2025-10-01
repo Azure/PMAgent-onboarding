@@ -73,3 +73,13 @@
     - agents toolkit
   knowledge_path:
     - "./data-schema-microsoft-365-agents-toolkit.md"
+- name: SignalR and Web PubSub
+  id: signalr_webpubsub_topic
+  description: "SignalR and Web PubSub provide fully managed, real-time messaging services. This topic references the combined product and data overview plus the Kusto Query Playbook to support OKR snapshots, usage metrics, service type growth, feature tracking, customer segments, top customers, retention, QoS, runtime requests, and VS integration telemetry."
+  tags:
+    - signalr
+    - webpubsub
+    - socketio
+    - realtime
+  knowledge_path:
+    - "./data-schema-signalr-and-web-pubsub.md"
