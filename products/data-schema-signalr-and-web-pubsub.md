@@ -79,6 +79,12 @@ SignalRBI
       ```kusto
       | extend ResourceId = tolower(ResourceId)
       ```
+    - Column collisions (SKU vs SKU1): When joining RPSettingLatest (which also has SKU) with BillingUsage_Daily, Kusto will auto-suffix duplicate column names (e.g., ‘SKU1’ from the right-hand side). Prefer explicit projection/rename to avoid ambiguity:
+      ```kusto
+      // Keep RPSettingLatest SKU after join
+      | project SKU = iif(isempty(SKU1), SKU, SKU1), *
+      | project-away SKU1
+      ```
 
 - Filters & Idioms
   - Service discriminators:
@@ -499,6 +505,31 @@ range x from 0 to 12 step 1
     | summarize Total = dcount(SubscriptionId) by StartMonth
 ) on StartMonth
 | project Month = StartMonth, Periods, Total, Retain, Ratio = 1.0*Retain/Total, Category = 'Subscription'
+```
+
+10) SocketIO Serverless resources (last 28 days, weekly by SKU)
+- Description: Counts distinct SocketIO resources operating in Serverless mode over the last 28 days, grouped weekly by SKU. Note: when joining RPSettingLatest with BillingUsage_Daily, use SKU1 to refer to the RPSettingLatest SKU (or explicitly project/rename).
+```kusto
+// Preferred generic anchor: last ingested day
+let EndDate = toscalar(BillingUsage_Daily | top 1 by Date desc | project Date);
+let StartDate = EndDate - 27d;
+let raw = RPSettingLatest
+| where ResourceId has '/Microsoft.SignalRService/WebPubSub/' and Kind == 'SocketIO'
+| join kind = inner (
+    BillingUsage_Daily
+    | where Date between (StartDate .. EndDate)
+) on ResourceId
+| extend ServiceMode = extract_json('$.socketIO.serviceMode', Extras, typeof(string))
+| project Week = startofweek(Date), ResourceId, SKU = iif(isempty(SKU1), SKU, SKU1), ServiceMode;
+raw
+| where ServiceMode =~ 'Serverless'
+| summarize ServerlessCount = dcount(ResourceId) by Week, SKU
+```
+// Alternative fixed anchor if ingestion metadata is unavailable
+```kusto
+let EndDate = startofday(now(), -1);
+let StartDate = EndDate - 27d;
+// ... same as above
 ```
 
 ## Reasoning Notes (only if uncertain)
