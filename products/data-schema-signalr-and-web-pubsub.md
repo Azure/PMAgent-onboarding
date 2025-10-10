@@ -51,7 +51,11 @@ SignalRBI
   - Timezone: Not specified; assume UTC.
 
 - Freshness & Completeness Gates
-  - End-of-day completeness: Many queries derive an EndDate by requiring at least two sentinel regions (e.g., australiaeast and westeurope) to report, ensuring last-day completeness before inclusion.
+  - End-of-day anchor: Per product guidance (Issue #10), do not rely on two-region sentinel gating for end time. Anchor to the last ingested day from BillingUsage_Daily:
+    ```kusto
+    let EndDate = toscalar(BillingUsage_Daily | top 1 by Date desc | project Date);
+    // Use Date <= EndDate in subsequent filters
+    ```
   - Week/Month completeness: Queries often limit to complete prior week/month windows (e.g., Date < startofweek(now()) or Date < startofmonth(now())).
   - Rolling gates: For QoS rolling 7/28-day, use the last ingested env_time (top 1 by time desc) as the anchor; compute rolling windows relative to that anchor.
   - Recommendation when uncertain: Avoid using current day; prefer the last confirmed complete day or the previous full week/month.
@@ -150,19 +154,10 @@ SignalRBI
 ## Query Building Blocks (Copy-paste snippets, contains snippets and description)
 
 - Time window template
-  - “Use last complete day across sentinel regions”
+  - “Use last ingested day (no sentinel regions)”
     ```kusto
-    // Purpose: Anchor analysis to the latest complete day where both sentinel regions reported.
-    let Sentinels = dynamic(['australiaeast','westeurope']);
-    let EndDate =
-        toscalar(
-            BillingUsage_Daily
-            | where Date > ago(10d) and Region in (Sentinels)
-            | summarize Regions = dcount(Region) by Date
-            | where Regions >= array_length(Sentinels)
-            | top 1 by Date desc
-            | project Date
-        );
+    // Purpose: Anchor analysis to the latest ingested day without region sentinels.
+    let EndDate = toscalar(BillingUsage_Daily | top 1 by Date desc | project Date);
     // Use Date <= EndDate in subsequent filters
     ```
   - Complete prior week/month window
@@ -355,11 +350,9 @@ raw
 ```
 
 3) AI cohort subscriptions (28-day rolling, Monthly anchor)
-- Description: Computes 28-day rolling counts of AI cohort subscriptions (keyword-based) anchored to the last complete day using separate sentinel region anchors for EU vs Non-EU. Produces month-aligned points and overlays goals if needed. Adapt keywords or rolling window (DoM) per cohort definition.
+- Description: Computes 28-day rolling counts of AI cohort subscriptions (keyword-based) anchored to the last ingested day (no sentinel regions). Produces month-aligned points and overlays goals if needed. Adapt keywords or rolling window (DoM) per cohort definition.
 ```kusto
-let NonEU = BillingUsage_Daily | where Region == 'australiaeast' | top 1 by Date desc | project Date;
-let EU    = BillingUsage_Daily | where Region == 'westeurope'   | top 1 by Date desc | project Date;
-let Current = toscalar(NonEU | union EU | top 1 by Date asc);
+let Current = toscalar(BillingUsage_Daily | top 1 by Date desc | project Date);
 let DoM = 28d;
 let LatestPeriod = BillingUsage_Daily
 | where Date > Current - DoM and Date <= Current
@@ -381,17 +374,10 @@ let LatestPeriodBeforeLast = BillingUsage_Daily
 LatestPeriod | union LatestPeriodBeforeLast
 ```
 
-4) Resource totals with completeness gate and “HasConnection”
-- Description: Ensures complete last day via sentinel regions, derives per-resource SKU/Region, joins metrics to compute HasConnection (MaxConnectionCount>0), then counts distinct resources per day by SKU/Region and connection status. Adapt sentinel regions or service family filter.
+4) Resource totals with “HasConnection”
+- Description: Derives EndDate as the last ingested day (no sentinel regions), derives per-resource SKU/Region, joins metrics to compute HasConnection (MaxConnectionCount>0), then counts distinct resources per day by SKU/Region and connection status. Adapt service family filter as needed.
 ```kusto
-let EndDate = toscalar(
-    BillingUsage_Daily
-    | where Date > ago(10d) and Region in ('australiaeast', 'westeurope')
-    | summarize counter = dcount(Region) by Date
-    | where counter >= 2
-    | top 1 by Date desc
-    | project Date
-);
+let EndDate = toscalar(BillingUsage_Daily | top 1 by Date desc | project Date);
 BillingUsage_Daily
 | where Date > ago(61d) and Date <= EndDate and ResourceId has 'microsoft.signalrservice/signalr'
 | extend SubscriptionId = tostring(split(ResourceId, '/')[2])
@@ -518,7 +504,7 @@ range x from 0 to 12 step 1
 ## Reasoning Notes (only if uncertain)
 - Timestamp timezone: Not stated; adopt UTC to avoid ambiguity. Alternative: enforce a product-specific timezone if provided elsewhere.
 - Revenue multipliers: Concrete values are present in queries; however, per guidance, we abstract with placeholders (<PriceStandard>, <PricePremium>, <PriceDefault>) to avoid hardcoding sensitive rates. Alternative: define via a config table/function.
-- Completeness gates: Two sentinel regions are used (australiaeast, westeurope) as a proxy for completeness; we assume they’re sufficient sentinels. Alternative: expand to more regions or use a system ingest health signal.
+- End-of-day anchoring: Per team request, use the last ingested day (top 1 by Date desc) instead of multi-region sentinel gating when setting EndDate in daily queries.
 - Inner joins to MaxConnectionCount_Daily: Used to ensure activity/existence; we adopt the pattern for quality gating. Alternative: use leftouter with additional checks if MaxConnectionCount_Daily is sparse in some regions.
 - AI cohort detection: Keyword-based in ResourceId; we adopt the exact keyword set. Alternative: maintain a centralized cohort list to reduce false positives.
 - Replica handling: Counting replicas and primaries by trimming “/replicas/”; adopt that for premium-only scenarios. Alternative: compute at SKU-agnostic level as needed.
