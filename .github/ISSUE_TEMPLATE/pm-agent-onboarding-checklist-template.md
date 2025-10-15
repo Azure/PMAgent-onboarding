@@ -54,12 +54,25 @@ assignees: ''
 
 - [ ] Go to PM agent and send following message to PM agent to generate product knowledge. PM agent will help you create a PR for initial product knowledge.
 
-> #onboard [URL of GitHb issue comment for product resources] 
+    ```
+    #onboard [URL of GitHb issue comment for product resources] 
+    ```
 
 - [ ] Review and submit the product knowledge PR. 
 
   - Complete all **[TODO]Data_Engineer** actions for data engineering.
   - Update **data hygiene** as the PR guidance, if necessary.
   - Review the initial product knowledge and update it if necessary.
+     
+- [ ] Try PM Agent with newly created knowledge.
 
+    ```
+    #load [URL of GitHub PR]
+    ```
+    After you've seen the successful knowledge load. Try with the some questions.
+    
 - [ ] Continue opimizing your product knowledge with PRs in future, if there is any new changes of telemetry.
+  - You can manually update the knowledge file or you can use the following command to let PM Agent help you to optimize
+    ```
+    #onboard help me to improve the PR [PR URL] about [some topic]. The ground truth of query should be xxx but currently it's yyy.
+    ```
