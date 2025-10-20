@@ -100,6 +100,12 @@ Consolidation
   - 'dotnet_migrate_apps_28d_AverageUsers' → ratio of Users_MAU to Apps_All by Date, UserSource
   - 'java_consolidated_lines_of_code_per_project' → cross-db union of lines_of_code helpers with percentiles
 
+### Additional conventions for internal funnels (Power BI-derived)
+- Attribution: Derive user_source as 'internal' vs 'external' by joining VsCodeInsights.fact_user_isinternal on DevDeviceId, then extend user_source via IsInternal.
+- Event surfaces: VSCodeExt.RawEventsVSCodeExt (VS Code extension telemetry) and Copilot.RawEventsTraces (Copilot chat) are used to stitch tool invocations and chat requests to migration flows.
+- Stable sets and anchors: Use materialize() on distinct stage sets and join back to the anchor stage (e.g., users_assessment) to constrain the population.
+- Version gating: When relevant (e.g., Java Upgrade), apply version filters (major/minor and marketplace vs snapshot builds) to ensure comparable funnels.
+
 ## Entity & Counting Rules (Core Definitions)
 - Entity model and keys (as observed):
   - Cohort: UserSource (sometimes user_source)
@@ -120,6 +126,86 @@ Consolidation
 
 ## Views (Reusable Layers)
 
+- View name: enrich_with_user_source
+  - Description: Attach an internal/external cohort to any dataset keyed by DevDeviceId by joining VsCodeInsights.fact_user_isinternal. Handles IsInternal/IsInternal1 naming differences observed across joins.
+  - Query:
+    ```kusto
+    let enrich_with_user_source = (dataset:(*) ) {
+        dataset
+        | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+        | extend user_source = iff(tobool(coalesce(IsInternal, IsInternal1)), 'internal', 'external')
+        | project-away IsInternal, IsInternal1
+    };
+    ```
+  - View used: []
+  - Table used: [cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal]
+
+- View name: vscode_java_upgrade_workflow_base
+  - Description: Reusable base query graph for the VS Code Java Upgrade workflow used in funnel computations (root → filtered → inSession → workflow), matching the internal dashboard logic.
+  - Query:
+    ```kusto
+    let start = startofday(ago(28d));
+    let end = startofday(now());
+    let _isMarketplaceVersion = true;
+    // baseQuery root
+    let root = () {
+        database("VSCodeExt").RawEventsVSCodeExt
+        | where ExtensionName == "vscjava.vscode-java-upgrade"
+        | where ServerTimestamp  between (start .. end)
+        | extend majorVersion = toint(split(ExtensionVersion, ".", 0)[0]), minorVersion = toint(split(ExtensionVersion, ".", 1)[0])
+        | where majorVersion >= 1 and minorVersion >= 2
+        | extend isMarketplaceVersion = iff(ExtensionVersion !has "SNAPSHOT", true, false)
+        | where isempty(['_isMarketplaceVersion']) or isMarketplaceVersion == ['_isMarketplaceVersion']
+        | extend sessionId = tostring(Properties["sessionid"])
+        | extend appId = tostring(Properties["hashedappid"])
+    };
+    // baseQuery filtered
+    let filtered = () {
+        root
+        | where isnotempty(sessionId) and sessionId != 'unknown'
+        | extend model = tostring(Properties["modelid"])
+        | extend targetdeps = tostring(Properties["targetdeps"])
+        | summarize arg_min(ServerTimestamp, targetdeps), arg_min(ServerTimestamp, model) by sessionId
+        | project model, targetdeps, infoSessionId=sessionId
+        | join kind=rightouter root on $left.infoSessionId == $right.sessionId
+    };
+    // baseQuery inSession
+    let inSession = () {
+        filtered
+        | where isnotempty(sessionId) and sessionId != 'unknown'
+    };
+    // baseQuery workflow
+    let workflow = () {
+        inSession
+        | project DevDeviceId, sessionId, appId, ServerTimestamp, ExtensionVersion, EventName, majorVersion, minorVersion, Measures, Properties
+        | extend planStarted = iff(EventName=="vscjava.vscode-java-upgrade/generateupgradeplanforjavaproject.start", 'succeeded', '')
+        | extend planGenerated = iff(EventName=="vscjava.vscode-java-upgrade/confirmupgradeplanforjavaproject.start" or EventName=="vscjava.vscode-java-upgrade/generateupgradeplanforjavaproject.end", 'succeeded', '')
+        | extend readyExecution = iff((EventName == "vscjava.vscode-java-upgrade/confirmupgradeplanforjavaproject.end" and (majorVersion < 1 or minorVersion < 2)) or (EventName == "vscjava.vscode-java-upgrade/setupdevelopmentenvironmentforupgrade.end" and (majorVersion >= 1 and minorVersion >= 2)), 'succeeded', '')
+        // remediation
+        | extend remediationStarted = iff(EventName in ("vscjava.vscode-java-upgrade/upgradejavaprojectusingopenrewrite.start", "vscjava.vscode-java-upgrade/task.upgradeprojectusingagent.started", "vscjava.vscode-java-upgrade/task.upgradeprojectusingairecipes.started"), 'succeeded', '')
+        | extend remediationResult = iff(EventName in ("vscjava.vscode-java-upgrade/upgradejavaprojectusingopenrewrite.end", "vscjava.vscode-java-upgrade/task.upgradeprojectusingagent.completed", "vscjava.vscode-java-upgrade/task.upgradeprojectusingairecipes.completed"), iff(Properties['result']!='failed', 'succeeded', 'failed'), '')
+        // build
+        | extend buildStarted = iff(EventName=="vscjava.vscode-java-upgrade/buildjavaproject.start", 'succeeded', '')
+        | extend builtResult = iff(EventName=="vscjava.vscode-java-upgrade/buildjavaproject.end", tostring(Properties["result"]), '')
+        // cve
+        | extend cveStarted = iff(EventName=="vscjava.vscode-java-upgrade/validatecvesforjava.start", 'succeeded', '')
+        | extend cveResult = iff(EventName=="vscjava.vscode-java-upgrade/validatecvesforjava.end", iff((isempty(Measures["cve.high"]) and isempty(Measures["cve.critical"]) and isempty(Measures["cve.medium"])), "succeeded", "failed"), '')
+        // behavior
+        | extend behaviorStarted = iff(EventName=="vscjava.vscode-java-upgrade/validatebehaviorchangesforjava.start", 'succeeded', '')
+        | extend behaviorResult = iff(EventName=="vscjava.vscode-java-upgrade/project.state.behaviorchanges", iff((toint(Measures["numofbehaviorchangestofix"])==0), "succeeded", "failed"), '')
+        // test
+        | extend testStarted = iff(EventName=="vscjava.vscode-java-upgrade/runtestsforjava.start", 'succeeded', '')
+        | extend testResult = iff(EventName=="vscjava.vscode-java-upgrade/runtestsforjava.end", tostring(Properties["result"]), '')
+        // summarize
+        | extend summarizeStarted = iff(EventName=="vscjava.vscode-java-upgrade/summarizeupgrade.start", 'succeeded', '')
+        | extend summarizeResult = iff(EventName=="vscjava.vscode-java-upgrade/summarizeupgrade.end", "succeeded", '')
+        | project-away EventName, majorVersion, minorVersion, Measures, Properties
+        | where isnotempty(planStarted) or isnotempty(planGenerated) or isnotempty(readyExecution) or isnotempty(remediationStarted) or isnotempty(remediationResult) or isnotempty(buildStarted) or isnotempty(builtResult) or isnotempty(cveStarted) or isnotempty(cveResult) or isnotempty(behaviorStarted) or isnotempty(behaviorResult) or isnotempty(testStarted) or isnotempty(testResult) or isnotempty(summarizeStarted) or isnotempty(summarizeResult)
+    };
+    workflow
+    ```
+  - View used: []
+  - Table used: [cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt]
 
 ## Query Building Blocks (Copy-paste snippets, contains snippets and description)
 
@@ -218,6 +304,50 @@ Consolidation
         raw
         | summarize percentiles(lines, 95, 90, 75) by user_source
     )
+    ```
+
+- Internal/external attribution join
+  - Description: Map DevDeviceId to an 'internal'/'external' cohort.
+  - Snippet:
+    ```kusto
+    T
+    | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+    | extend user_source = iff(tobool(coalesce(IsInternal, IsInternal1)), 'internal', 'external')
+    ```
+
+- Funnel stage sets and anchor join
+  - Description: Build materialized per-stage distinct sets and restrict analysis to an anchor population (e.g., assessment kicked off).
+  - Snippet:
+    ```kusto
+    let start = startofday(ago(28d));
+    let end = startofday(now());
+    let users_assessment = materialize(
+        cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').assessment_run_records_helper(start, end)
+        | distinct DevDeviceId, VSCodeSessionId, ExtensionVersion, user_source, type = "Assessment Kick off (Click button or Chat)"
+    );
+    let users_precheck = materialize(
+        cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').assessment_precheck_records_helper(start, end)
+        | distinct DevDeviceId, ExtensionVersion, IsJavaProject, user_source, type = "Precheck ran"
+    );
+    let users_javaproject = users_precheck
+        | where IsJavaProject == "true"
+        | distinct DevDeviceId, ExtensionVersion, user_source, type = "Confirmed as Java project";
+    union users_assessment, users_precheck, users_javaproject
+    | join kind=inner (users_assessment | project DevDeviceId) on DevDeviceId
+    ```
+
+- Stage matrix for visuals (bag_pack + mv-expand)
+  - Description: Convert summarized counts into a stage → {Devices, Apps, Sessions} object per row and expand for visuals.
+  - Snippet:
+    ```kusto
+    S
+    | extend data = bag_pack(
+        "Trigger Java Upgrade", bag_pack("Devices", planStartedDevices, "Apps", planStartedApps, "Sessions", planStartedSessions),
+        "Plan generated, wait for confirm", bag_pack("Devices", planGeneratedDevices, "Apps", planGeneratedApps, "Sessions", planGeneratedSessions),
+        "Plan confirmed, ready to execute", bag_pack("Devices", readyExecutionDevices, "Apps", readyExecutionApps, "Sessions", readyExecutionSessions)
+      )
+    | mv-expand stage_data = data
+    | project Stage = tostring(bag_keys(stage_data)[0]), Devices = toint(stage_data[tostring(bag_keys(stage_data)[0])].Devices)
     ```
 
 ## Example Queries (with explanations)
@@ -330,6 +460,327 @@ Get28DayRollingAggregation('Java', 'migrate/upgrade', 'Users_SecurityExecute')
 Get28DayRollingAggregation('Java', 'migrate/upgrade', 'Users_QualityExecute')
 | where isnotempty(UserSource)
 | where Date >= startofday(ago(28d))
+```
+
+11) Java Assessment funnel (user conversion across assess stages)
+- Description: this query is used to get the user funnel of Java Assessment, to analyze the user conversion rate in the assess process.
+```kusto
+let start = startofday(ago(28d));
+let end = startofday(now());
+let users_assessment = materialize(
+    cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').assessment_run_records_helper(start, end)
+    | distinct  DevDeviceId,VSCodeSessionId,ExtensionVersion, user_source,type = "Assessment Kick off (Click button or Chat)");
+let users_precheck = materialize(
+    cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').assessment_precheck_records_helper(start, end)
+    | distinct  DevDeviceId,ExtensionVersion,IsJavaProject, user_source,type = "Precheck ran");
+let users_javaproject = 
+    users_precheck 
+    | where IsJavaProject == "true"
+    | distinct  DevDeviceId,ExtensionVersion, user_source,type = "Confirmed as Java project";
+let users_appcat = 
+    cluster('https://ddtelai.kusto.windows.net/').database('Copilot').table('RawEventsTraces') 
+    | where timestamp between (start .. end)
+    | where operation_Name == 'java/appcat/command'
+    | extend data = parse_json(message)
+    | extend command = tostring(data.message)
+    | where command == 'analyze'
+    | extend dimensions = parse_json(customDimensions)
+    | extend appcatVersion = tostring(dimensions.appcatversion)
+    | where appcatVersion !in ('latest', 'experimental')
+    | extend status = tostring(dimensions.status)
+    | where status == 'start'
+    | extend callerid = tostring(dimensions.callerid)
+    | where callerid has "migrate-java-to-azure"
+    | project ServerTimestamp=timestamp, DevDeviceId=tostring(dimensions.devdeviceid),VSCodeSessionId = operation_ParentId
+    | join kind=leftouter (
+        users_assessment | distinct VSCodeSessionId,ExtensionVersion
+    ) on VSCodeSessionId
+    // the devdevice id in appcat cli may be consistent with the one in VSCodeExt
+    // So the devdeviceid count may increase by the union. But the discrepancy is acceptable.
+    | union (
+        cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+        | where ServerTimestamp between (start .. end)
+        | where EventName == 'vscjava.migrate-java-to-azure/java/migrateassistant/appcat/scan' and (Properties.result == 'success' or Properties.error !has "with exit code: 199" and Properties.error matches regex @"with exit code: \d+")
+        | project DevDeviceId,VSCodeSessionId,ServerTimestamp,ExtensionVersion
+    )
+    | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+    | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+    | distinct  DevDeviceId,ExtensionVersion, user_source,type = "AppCAT ran";
+let users_report = 
+    cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').assessment_success_occurrence_vscode_helper(start, end)
+    | distinct  DevDeviceId,ExtensionVersion, user_source,type = "Report generated";
+union users_assessment,users_precheck,users_javaproject,users_appcat,users_report
+| join kind=inner (users_assessment | project DevDeviceId) on DevDeviceId
+```
+
+12) Java Upgrade funnel (end-to-end workflow in VS Code)
+- Description: this query is used to get the user funnel of Java Upgrade, to analyze the user conversion rate in the upgrade process.
+```kusto
+let start = startofday(ago(28d));
+let end = startofday(now());
+let _isMarketplaceVersion = true;
+// baseQuery root
+let root = () {
+    database("VSCodeExt").RawEventsVSCodeExt
+    | where ExtensionName == "vscjava.vscode-java-upgrade"
+    | where ServerTimestamp  between (start .. end)
+    | extend majorVersion = toint(split(ExtensionVersion, ".", 0)[0]), minorVersion = toint(split(ExtensionVersion, ".", 1)[0])
+    | where majorVersion >=1 and minorVersion >=2
+    | extend isMarketplaceVersion = iff(ExtensionVersion !has "SNAPSHOT", true, false)
+    | where isempty(['_isMarketplaceVersion']) or isMarketplaceVersion == ['_isMarketplaceVersion']
+    | extend sessionId = tostring(Properties["sessionid"])
+    | extend appId = tostring(Properties["hashedappid"])
+};
+// baseQuery filtered
+let filtered = () {
+    root
+    | where isnotempty(sessionId) and sessionId != 'unknown'
+    | extend model = tostring(Properties["modelid"])
+    | extend targetdeps = tostring(Properties["targetdeps"])
+    | summarize arg_min(ServerTimestamp,targetdeps), arg_min(ServerTimestamp, model) by sessionId
+    | project model, targetdeps, infoSessionId=sessionId
+    | join kind=rightouter root on $left.infoSessionId == $right.sessionId
+};
+// baseQuery inSession
+let inSession = () {
+    filtered
+    | where isnotempty(sessionId) and sessionId != 'unknown'
+};
+// baseQuery workflow
+let workflow = () {
+    inSession
+    | project DevDeviceId, sessionId, appId, ServerTimestamp, ExtensionVersion, EventName, majorVersion, minorVersion, Measures, Properties
+    | extend planStarted=iff(EventName=="vscjava.vscode-java-upgrade/generateupgradeplanforjavaproject.start",'succeeded','')
+    | extend planGenerated=iff(EventName=="vscjava.vscode-java-upgrade/confirmupgradeplanforjavaproject.start" or EventName=="vscjava.vscode-java-upgrade/generateupgradeplanforjavaproject.end", 'succeeded','')
+    | extend readyExecution=iff((EventName == "vscjava.vscode-java-upgrade/confirmupgradeplanforjavaproject.end" and (majorVersion <1 or minorVersion <2)) or
+     (EventName == "vscjava.vscode-java-upgrade/setupdevelopmentenvironmentforupgrade.end" and (majorVersion >=1 and minorVersion >=2)),'succeeded', '')
+    // remediation
+    | extend remediationStarted=iff(EventName in("vscjava.vscode-java-upgrade/upgradejavaprojectusingopenrewrite.start", "vscjava.vscode-java-upgrade/task.upgradeprojectusingagent.started", "vscjava.vscode-java-upgrade/task.upgradeprojectusingairecipes.started"), 'succeeded', '')
+    | extend remediationResult=iff(EventName in("vscjava.vscode-java-upgrade/upgradejavaprojectusingopenrewrite.end", "vscjava.vscode-java-upgrade/task.upgradeprojectusingagent.completed", "vscjava.vscode-java-upgrade/task.upgradeprojectusingairecipes.completed"), iff(Properties['result']!='failed', 'succeeded', 'failed'), '')
+    // build
+    | extend buildStarted=iff(EventName=="vscjava.vscode-java-upgrade/buildjavaproject.start", 'succeeded', '')
+    | extend builtResult=iff(EventName=="vscjava.vscode-java-upgrade/buildjavaproject.end", tostring(Properties["result"]), '')
+    // cve
+    | extend cveStarted=iff(EventName=="vscjava.vscode-java-upgrade/validatecvesforjava.start", 'succeeded', '')
+    | extend cveResult=iff(EventName=="vscjava.vscode-java-upgrade/validatecvesforjava.end", iff((isempty(Measures["cve.high"]) and isempty(Measures["cve.critical"]) and isempty(Measures["cve.medium"])), "succeeded", "failed"),'')
+    // behavior
+    | extend behaviorStarted=iff(EventName=="vscjava.vscode-java-upgrade/validatebehaviorchangesforjava.start", 'succeeded','')
+    | extend behaviorResult=iff(EventName=="vscjava.vscode-java-upgrade/project.state.behaviorchanges", iff((toint(Measures["numofbehaviorchangestofix"])==0), "succeeded", "failed"),'')
+    // test
+    | extend testStarted=iff(EventName=="vscjava.vscode-java-upgrade/runtestsforjava.start", 'succeeded', '')
+    | extend testResult=iff(EventName=="vscjava.vscode-java-upgrade/runtestsforjava.end", tostring(Properties["result"]), '') 
+    // summarize
+    | extend summarizeStarted=iff(EventName=="vscjava.vscode-java-upgrade/summarizeupgrade.start", 'succeeded','')
+    | extend summarizeResult=iff(EventName=="vscjava.vscode-java-upgrade/summarizeupgrade.end","succeeded",'')
+    | project-away EventName, majorVersion, minorVersion, Measures, Properties
+    | where isnotempty(planStarted) or isnotempty(planGenerated) or isnotempty(readyExecution) or isnotempty(remediationStarted) or isnotempty(remediationResult) or isnotempty(buildStarted) or isnotempty(builtResult) or isnotempty(cveStarted) or isnotempty(cveResult) or isnotempty( behaviorStarted) or isnotempty(behaviorResult) or isnotempty( testStarted) or isnotempty(testResult) or isnotempty( summarizeStarted) or isnotempty(summarizeResult)
+    | summarize 
+        take_any(ExtensionVersion),
+        planStartTime=arg_min(iff(isnotempty(planStarted), ServerTimestamp, datetime(null)), planStarted),
+        planGeneratedTime=arg_max(iff(isnotempty(planGenerated), ServerTimestamp, datetime(null)), planGenerated),
+        readyExcutionTime=arg_max(iff(isnotempty(readyExecution), ServerTimestamp, datetime(null)), readyExecution),
+        remediationStartTime=arg_min(iff(isnotempty(remediationStarted), ServerTimestamp, datetime(null)), remediationStarted),
+        remediationEndTime=arg_max(iff(isnotempty(remediationResult), ServerTimestamp, datetime(null)), remediationResult),
+        buildStartTime=arg_min(iff(isnotempty(buildStarted), ServerTimestamp, datetime(null)), buildStarted),
+        buildEndTime=arg_max(iff(isnotempty(builtResult), ServerTimestamp, datetime(null)), builtResult),
+        cveStartTime=arg_min(iff(isnotempty(cveStarted), ServerTimestamp, datetime(null)), cveStarted),
+        cveEndTime=arg_max(iff(isnotempty(cveResult), ServerTimestamp, datetime(null)), cveResult),
+        behaviorStartTime=arg_min(iff(isnotempty(behaviorStarted), ServerTimestamp, datetime(null)), behaviorStarted),
+        behaviorEndTime=arg_max(iff(isnotempty(behaviorResult), ServerTimestamp, datetime(null)), behaviorResult),
+        testStartTime=arg_min(iff(isnotempty(testStarted), ServerTimestamp, datetime(null)), testStarted),
+        testEndTime=arg_max(iff(isnotempty(testResult), ServerTimestamp, datetime(null)), testResult),
+        summarizeStartTime=arg_min(iff(isnotempty(summarizeStarted), ServerTimestamp, datetime(null)), summarizeStarted),
+        summarizeEndTime=arg_max(iff(isnotempty(summarizeResult), ServerTimestamp, datetime(null)), summarizeResult)
+        by sessionId, appId, DevDeviceId
+};
+workflow
+| join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+    | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+| summarize
+    planStartedDevices=dcountif(DevDeviceId, planStarted=='succeeded'),
+    planStartedSessions=dcountif(sessionId, planStarted=='succeeded'),
+    planStartedApps=dcountif(appId, planStarted=='succeeded'),
+    planGeneratedDevices=dcountif(DevDeviceId, planGenerated=='succeeded'),
+    planGeneratedSessions=dcountif(sessionId, planGenerated=='succeeded'),
+    planGeneratedApps=dcountif(appId, planGenerated=='succeeded'),
+    readyExecutionDevices=dcountif(DevDeviceId, readyExecution=='succeeded'),
+    readyExecutionSessions=dcountif(sessionId, readyExecution=='succeeded'),
+    readyExecutionApps=dcountif(appId, readyExecution=='succeeded'),
+    remediationStartedDevices=dcountif(DevDeviceId, remediationStarted=='succeeded' and readyExecution =='succeeded'),
+    remediationStartedSessions=dcountif(sessionId, remediationStarted=='succeeded' and readyExecution =='succeeded'),
+    remediationStartedApps=dcountif(appId, remediationStarted=='succeeded' and readyExecution =='succeeded'),
+    remediationSucceededDevices=dcountif(DevDeviceId, remediationResult=='succeeded' and readyExecution =='succeeded'),
+    remediationSucceededSessions=dcountif(sessionId, remediationResult=='succeeded' and readyExecution =='succeeded'),
+    remediationSucceededApps=dcountif(appId, remediationResult=='succeeded' and readyExecution =='succeeded'),
+    buildStartedDevices=dcountif(DevDeviceId, buildStarted=='succeeded' and readyExecution =='succeeded'),
+    buildStartedSessions=dcountif(sessionId, buildStarted=='succeeded' and readyExecution =='succeeded'),
+    buildStartedApps=dcountif(appId, buildStarted=='succeeded' and readyExecution =='succeeded'),
+    builtSucceededDevices=dcountif(DevDeviceId, builtResult == "succeeded" and readyExecution =='succeeded'),
+    builtSucceededSessions=dcountif(sessionId, builtResult == "succeeded" and readyExecution =='succeeded'),
+    builtSucceededApps=dcountif(appId, builtResult == "succeeded" and readyExecution =='succeeded'),
+    cveStartedDevices=dcountif(DevDeviceId, cveStarted=='succeeded' and readyExecution =='succeeded'),
+    cveStartedSessions=dcountif(sessionId, cveStarted=='succeeded' and readyExecution =='succeeded'),
+    cveStartedApps=dcountif(appId, cveStarted=='succeeded' and readyExecution =='succeeded'),
+    cveSucceededDevices=dcountif(DevDeviceId, cveResult == "succeeded" and readyExecution =='succeeded'),
+    cveSucceededSessions=dcountif(sessionId, cveResult == "succeeded" and readyExecution =='succeeded'),
+    cveSucceededApps=dcountif(appId, cveResult == "succeeded" and readyExecution =='succeeded'),
+    behaviorStartedDevices=dcountif(DevDeviceId, behaviorStarted=='succeeded' and readyExecution =='succeeded'),
+    behaviorStartedSessions=dcountif(sessionId, behaviorStarted=='succeeded' and readyExecution =='succeeded'),
+    behaviorStartedApps=dcountif(appId, behaviorStarted=='succeeded' and readyExecution =='succeeded'),
+    behaviorSucceededDevices=dcountif(DevDeviceId, behaviorResult == "succeeded" and readyExecution =='succeeded'),
+    behaviorSucceededSessions=dcountif(sessionId, behaviorResult == "succeeded" and readyExecution =='succeeded'),
+    behaviorSucceededApps=dcountif(appId, behaviorResult == "succeeded" and readyExecution =='succeeded'),
+    testStartedDevices=dcountif(DevDeviceId, testResult=='succeeded' and readyExecution =='succeeded'),
+    testStartedSessions=dcountif(sessionId, testResult=='succeeded' and readyExecution =='succeeded'),
+    testStartedApps=dcountif(appId, testResult=='succeeded' and readyExecution =='succeeded'),
+    testSucceededDevices=dcountif(DevDeviceId, testResult == "succeeded" and readyExecution =='succeeded'),
+    testSucceededSessions=dcountif(sessionId, testResult == "succeeded" and readyExecution =='succeeded'),
+    testSucceededApps=dcountif(appId, testResult == "succeeded" and readyExecution =='succeeded'),
+    summarizeStartedDevices=dcountif(DevDeviceId, summarizeStarted =='succeeded' and readyExecution =='succeeded'),
+    summarizeStartedSessions=dcountif(sessionId, summarizeStarted =='succeeded' and readyExecution =='succeeded'),
+    summarizeStartedApps=dcountif(appId, summarizeStarted =='succeeded' and readyExecution =='succeeded'),
+    summarizedDevices=dcountif(DevDeviceId,summarizeResult=='succeeded' and readyExecution =='succeeded'),
+    summarizedSessions=dcountif(sessionId,summarizeResult=='succeeded' and readyExecution =='succeeded'),
+    summarizedApps=dcountif(appId,summarizeResult=='succeeded' and readyExecution =='succeeded') by user_source
+| extend data = bag_pack(
+    "Trigger Java Upgrade", bag_pack("Devices", planStartedDevices, "Apps", planStartedApps, "Sessions", planStartedSessions),
+    "Plan generated, wait for confirm", bag_pack("Devices", planGeneratedDevices, "Apps", planGeneratedApps, "Sessions", planGeneratedSessions),
+    "Plan confirmed, ready to execute", bag_pack("Devices", readyExecutionDevices, "Apps", readyExecutionApps, "Sessions", readyExecutionSessions),
+    "Code remediation started", bag_pack("Devices", remediationStartedDevices, "Apps", remediationStartedApps, "Sessions", remediationStartedSessions),
+    "Code remediation completed", bag_pack("Devices", remediationSucceededDevices, "Apps", remediationSucceededApps, "Sessions", remediationSucceededSessions),
+    "Build started", bag_pack("Devices", buildStartedDevices, "Apps", buildStartedApps, "Sessions", buildStartedSessions),
+    "Build succeeded", bag_pack("Devices", builtSucceededDevices, "Apps", builtSucceededApps, "Sessions", builtSucceededSessions),
+    "CVE check started", bag_pack("Devices", cveStartedDevices, "Apps", cveStartedApps, "Sessions", cveStartedSessions),
+    "CVE check passed", bag_pack("Devices", cveSucceededDevices, "Apps", cveSucceededApps, "Sessions", cveSucceededSessions),
+    "Behavior check started", bag_pack("Devices", behaviorStartedDevices, "Apps", behaviorStartedApps, "Sessions", behaviorStartedSessions),
+    "Behavior check passed", bag_pack("Devices", behaviorSucceededDevices, "Apps", behaviorSucceededApps, "Sessions", behaviorSucceededSessions),
+    "Unit tests started", bag_pack("Devices", testStartedDevices, "Apps", testStartedApps, "Sessions", testStartedSessions),
+    "Unit tests passed", bag_pack("Devices", testSucceededDevices, "Apps", testSucceededApps, "Sessions", testSucceededSessions),
+    "Summarize started", bag_pack("Devices", summarizeStartedDevices, "Apps", summarizeStartedApps, "Sessions", summarizeStartedSessions),
+    "Summarize completed", bag_pack("Devices", summarizedDevices, "Apps", summarizedApps, "Sessions", summarizedSessions)
+)
+| mv-expand stage_data = data
+| project Stage = tostring(bag_keys(stage_data)[0]), 
+          Devices = toint(stage_data[tostring(bag_keys(stage_data)[0])].Devices),user_source
+```
+
+13) Java Migration funnel (broad, includes prompt/container/build-only)
+- Description: As of last 28 days. This funnel covers all users involved in general migration, including those using migrate-by-prompt, containerization, and build-only approaches. As a result, may not accurately represent conversions along the classical migration path.
+```kusto
+let start = startofday(ago(28d));
+let end = startofday(now());
+let users_migration = materialize(
+    cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').migration_records_helper(start, end)
+    | distinct DevDeviceId,VSCodeSessionId,ExtensionVersion, user_source,type = "Kick off Migration");
+let users_migration_java = cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').migration_records_with_java_helper(start,end)
+    | distinct DevDeviceId,VSCodeSessionId,ExtensionVersion, user_source,type = "Have Java App";
+let users_tool_invoke =
+    cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+        | where ServerTimestamp between (start .. (end - 1s))
+        | where ServerTimestamp >= datetime(2025-05-20)
+        | where ExtensionName has "migrate-java-to-azure"
+        | where EventName has 'java/migrateassistant/tool/invoke'
+        | extend tool=tostring(Properties.invokedtoolid)
+        | where tool in ('createMigrationPlan','appmod-run-task')
+        | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+        | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+        | project ServerTimestamp, DevDeviceId, user_source,Properties,ExtensionVersion
+        | union (
+            cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+            | where timestamp  between (start .. (end - 1s))
+            | where timestamp >= datetime(2025-07-31)
+            | where operation_Name == "java/migrateassistant/tool/invoke"
+            | extend properties = parse_json(customDimensions)
+            | extend invokedToolId = tostring(properties["invokedtoolid"])
+            | where invokedToolId has 'appmod-run-task'
+            | extend DevDeviceId = tostring(properties.devdeviceid)
+            | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+            | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+            | extend ExtensionVersion = tostring(properties.callerversion)
+        )
+        | distinct DevDeviceId,ExtensionVersion, user_source,type = "Tool invoked (after user's confirmation)";
+let users_copilot_request = 
+    cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+    | where ServerTimestamp between (start .. end)
+    | where ExtensionName == 'GitHub.copilot-chat'
+    | where EventName == "github.copilot-chat/panel.request"
+    | where VSCodeSessionId in (users_migration | distinct VSCodeSessionId) or DevDeviceId in (users_migration | distinct DevDeviceId) 
+    | project ServerTimestamp,EventName,VSCodeSessionId, requestId = tostring(Properties.requestid), conversationId = tostring(Properties.conversationid), DevDeviceId,Properties,toolcounts = tostring(Properties.toolcounts), Measures
+    | project DevDeviceId, toolcounts,requestId, ServerTimestamp, Properties,VSCodeSessionId
+    | where toolcounts has 'appmod-run-task' or toolcounts has 'createMigrationPlan'
+    | join kind=leftouter (
+        users_migration 
+        | distinct VSCodeSessionId, ExtensionVersion
+    ) on VSCodeSessionId
+    | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+    | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+    | union (users_tool_invoke)
+    | distinct DevDeviceId,ExtensionVersion, user_source,type = "Copilot request for migration plan";
+let users_build = materialize(cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').build_result_records_helper(start,end));
+let users_build_invoke =
+    users_build
+    | distinct DevDeviceId,ExtensionVersion, user_source,type = "Buildfix start";
+let users_build_success =
+    users_build
+    | where success
+    | distinct DevDeviceId,ExtensionVersion, user_source,type = "Buildfix success";
+union users_migration,users_copilot_request,users_tool_invoke, users_build_invoke,users_build_success,users_migration_java
+```
+
+14) Java Migration funnel (classical flow only)
+- Description: As of last 28 days. This funnel focuses on Java users using classical migration scenarios, which involves using a migration plan and ideally going through validation. Users who use migrate-by-prompt, containerization, or only perform validation may not follow this classical flow and are therefore excluded from this funnel analysis.
+```kusto
+let start = startofday(ago(28d));
+let end = startofday(now());
+let users_migration = 
+    cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').narrow_migration_records_helper_Java(start, end)
+    | project  DevDeviceId,VSCodeSessionId,ExtensionVersion, user_source,type = "Kick off Migration with Java";
+let users_tool_invoke = 
+    cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+        | where ServerTimestamp between (start .. (end - 1s))
+        | where ExtensionName has "migrate-java-to-azure" and EventName has 'java/migrateassistant/tool/invoke'
+        | extend tool=tostring(Properties.invokedtoolid)
+        | where tool in ('createMigrationPlan','appmod-run-task')
+        | project ServerTimestamp, DevDeviceId,Properties,ExtensionVersion,VSCodeSessionId
+        | union (
+            cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+            | where timestamp  between (start .. (end - 1s))
+            | where operation_Name == "java/migrateassistant/tool/invoke"
+            | extend invokedToolId = tostring(customDimensions["invokedtoolid"])
+            | where invokedToolId has 'appmod-run-task'
+            | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+            | extend ExtensionVersion = tostring(customDimensions.callerversion), VSCodeSessionId = tostring(customDimensions.callersessionid)
+        )
+        | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+        | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+        | mv-expand type = dynamic(["Tool invoked for Java", "Copilot request for migration plan for Java"]) to typeof(string)
+        | project DevDeviceId,ExtensionVersion,VSCodeSessionId, user_source,type;
+let users_copilot_request =
+    cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+    | where ServerTimestamp between (start .. end)
+    | where ExtensionName == 'GitHub.copilot-chat' and EventName == "github.copilot-chat/panel.request"
+    | project ServerTimestamp,EventName,VSCodeSessionId, requestId = tostring(Properties.requestid), conversationId = tostring(Properties.conversationid), DevDeviceId,Properties,toolcounts = tostring(Properties.toolcounts), Measures
+    | project DevDeviceId, toolcounts,requestId, ServerTimestamp, Properties,VSCodeSessionId
+    | where toolcounts has 'appmod-run-task' or toolcounts has 'createMigrationPlan'
+    | join kind=leftouter (
+        users_migration 
+        | distinct VSCodeSessionId, ExtensionVersion
+    ) on VSCodeSessionId
+    | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+    | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+    | project DevDeviceId,ExtensionVersion,VSCodeSessionId, user_source,type="Copilot request for migration plan for Java";
+let users_build = 
+    cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').build_result_records_with_appid_helper(start,end) 
+    | project DevDeviceId,ExtensionVersion,VSCodeSessionId, user_source,success;
+let users_build_invoke = 
+    users_build
+    | project DevDeviceId, ExtensionVersion, VSCodeSessionId, user_source, type = "Buildfix start";
+let users_build_success = 
+    users_build
+    | where success
+    | project DevDeviceId, ExtensionVersion, VSCodeSessionId, user_source, type = "Buildfix success";
+union users_migration,users_copilot_request,users_tool_invoke, users_build_invoke, users_build_success
+| join kind=inner (users_migration | project VSCodeSessionId) on VSCodeSessionId
 ```
 
 ## Reasoning Notes (only if uncertain)
@@ -733,6 +1184,78 @@ The product’s main cluster/database is appmod.westus2.kusto.windows.net/Consol
   ```
 
 ---
+
+### Table name: cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+- Priority: High
+- What this table represents: Raw VS Code extension telemetry used to stitch migration/upgrade funnels and tool invocations.
+- When to use:
+  - Detect tool invocation events (e.g., 'java/migrateassistant/tool/invoke').
+  - Join to funnels via VSCodeSessionId and DevDeviceId.
+- Common fields used in this playbook:
+
+  | Column           | Type     | Description |
+  |------------------|----------|-------------|
+  | ServerTimestamp  | datetime | Event timestamp (VS Code). |
+  | ExtensionName    | string   | Name of the extension emitting the event. |
+  | EventName        | string   | Event identifier. |
+  | DevDeviceId      | string   | Device identifier used for attribution. |
+  | VSCodeSessionId  | string   | Session identifier used to correlate events. |
+  | Properties       | dynamic  | Event properties bag (used to extract tool ids, results). |
+  | Measures         | dynamic  | Event measures bag. |
+
+- Example usage:
+  ```kusto
+  cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+  | where ServerTimestamp between (startofday(ago(28d)) .. startofday(now()))
+  | where ExtensionName has "migrate-java-to-azure" and EventName has "java/migrateassistant/tool/invoke"
+  | extend tool = tostring(Properties.invokedtoolid)
+  | where tool in ('createMigrationPlan','appmod-run-task')
+  ```
+
+---
+
+### Table name: cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal
+- Priority: High
+- What this table represents: Dimensional mapping from DevDeviceId to an internal/external flag used to derive user_source.
+- Common fields used in this playbook:
+
+  | Column      | Type     | Description |
+  |-------------|----------|-------------|
+  | DevDeviceId | string   | Device identifier to join. |
+  | IsInternal  | bool/int | Internal user flag (observed as bool or 0/1). |
+
+- Example usage:
+  ```kusto
+  T
+  | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+  | extend user_source = iff(tobool(coalesce(IsInternal, IsInternal1)), 'internal', 'external')
+  ```
+
+---
+
+### Table name: cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+- Priority: Normal
+- What this table represents: Copilot chat telemetry; used to identify migration-related requests and correlate to VS Code sessions/devices.
+- Common fields used in this playbook:
+
+  | Column             | Type     | Description |
+  |--------------------|----------|-------------|
+  | timestamp          | datetime | Event timestamp (Copilot). |
+  | operation_Name     | string   | Operation name (e.g., 'java/migrateassistant/tool/invoke'). |
+  | customDimensions   | dynamic  | Bag used to extract invokedtoolid, devdeviceid, callerversion, callersessionid. |
+  | operation_ParentId | string   | Parent operation id; sometimes correlated with VSCode session. |
+
+- Example usage:
+  ```kusto
+  cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+  | where timestamp between (startofday(ago(28d)) .. startofday(now()))
+  | where operation_Name == "java/migrateassistant/tool/invoke"
+  | extend properties = parse_json(customDimensions)
+  | extend invokedToolId = tostring(properties.invokedtoolid)
+  | where invokedToolId has 'appmod-run-task'
+  | extend DevDeviceId = tostring(properties.devdeviceid)
+  | extend ExtensionVersion = tostring(properties.callerversion)
+  ```
 
 ## Notes and patterns for all tables above
 - All tables are aggregate snapshots keyed by Date and user_source; do not treat them as raw events.
