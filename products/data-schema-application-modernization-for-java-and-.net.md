@@ -350,6 +350,1197 @@ Consolidation
     | project Stage = tostring(bag_keys(stage_data)[0]), Devices = toint(stage_data[tostring(bag_keys(stage_data)[0])].Devices)
     ```
 
+### Additional Query Building Blocks — Helper Functions Catalog (pre-aggregation builders for deeper analysis)
+
+These KQL functions build the pre-aggregated facts that many dashboards consume (MAU/MEU, unique app/project counts, assessment/migration/build/validation stages). Use them when you need to recompute slices, enrich with additional filters, or validate the numbers behind rolling 28-day aggregates.
+
+- Core aggregator
+  - Get28DayRollingAggregation
+  ```kusto
+  Get28DayRollingAggregation(language:string, modernizationType:string, name:string)
+  {
+  RollingAggregation
+  | where Language == language and ModernizationType == modernizationType and Name == name and LookBackWindow == "28d"
+  | summarize arg_max(DataIngestTimestamp, Count) by UserSource, startofday(Date)
+  | project Date, UserSource, Count;
+  }
+  ```
+
+- Rates derived from rolling aggregates
+  - GetBuildSuccessRate
+  ```kusto
+  GetBuildSuccessRate(language:string, modernizationType:string)
+  {
+      let buildStartedOverTime = materialize(
+      Get28DayRollingAggregation(language=language, modernizationType=modernizationType, name="Apps_BuildStarted")
+      | project Date, UserSource, BuildStartedCount = Count
+  );
+      let buildPassedOverTime = materialize(
+          Get28DayRollingAggregation(language=language, modernizationType=modernizationType, name="Apps_BuildPassed")
+          | project Date, UserSource, BuildPassedCount = Count
+      );
+      buildStartedOverTime
+      | join kind=leftouter buildPassedOverTime on Date, UserSource
+      | extend BuildPassedCount = coalesce(BuildPassedCount, 0)
+      | extend SuccessRate = case(
+          BuildStartedCount == 0, 0.0,
+          todouble(BuildPassedCount) / todouble(BuildStartedCount)
+      )
+      | extend SuccessRatePercent = round(SuccessRate * 100, 2)
+      | project 
+          Date,
+          language,
+          modernizationType,
+          UserSource,
+          BuildStartedCount,
+          BuildPassedCount,
+          SuccessRate,
+          SuccessRatePercent
+  }
+  ```
+
+  - GetCveFreeRate
+  ```kusto
+  GetCveFreeRate(language:string, modernizationType:string)
+  {
+      let CveStartedOverTime = materialize(
+      Get28DayRollingAggregation(language=language, modernizationType=modernizationType, name="Sessions_CveStarted")
+      | project Date, UserSource, CveStartedCount = Count
+  );
+      let CvePassedOverTime = materialize(
+          Get28DayRollingAggregation(language=language, modernizationType=modernizationType, name="Sessions_CvePassed")
+          | project Date, UserSource, CvePassedCount = Count
+      );
+      CveStartedOverTime
+      | join kind=leftouter CvePassedOverTime on Date, UserSource
+      | extend CvePassedCount = coalesce(CvePassedCount, 0)
+      | extend SuccessRate = case(
+          CveStartedCount == 0, 0.0,
+          todouble(CvePassedCount) / todouble(CveStartedCount)
+      )
+      | extend SuccessRatePercent = round(SuccessRate * 100, 2)
+      | project 
+          Date,
+          language,
+          modernizationType,
+          UserSource,
+          CveStartedCount,
+          CvePassedCount,
+          CveNotPassedCount = CveStartedCount - CvePassedCount,
+          SuccessRate,
+          SuccessRatePercent
+  }
+  ```
+
+  - GetTestPassRate
+  ```kusto
+  GetTestPassRate(language:string, modernizationType:string)
+  {
+      let testsStartedOverTime = materialize(
+      Get28DayRollingAggregation(language=language, modernizationType=modernizationType, name="Sessions_TestRunsStarted")
+      | project Date, UserSource, TestsStartedCount = Count
+  );
+      let testsPassedOverTime = materialize(
+          Get28DayRollingAggregation(language=language, modernizationType=modernizationType, name="Sessions_TestRunsPassed")
+          | project Date, UserSource, TestsPassedCount = Count
+      );
+      testsStartedOverTime
+      | join kind=leftouter testsPassedOverTime on Date, UserSource
+      | extend TestsPassedCount = coalesce(TestsPassedCount, 0)
+      | extend SuccessRate = case(
+          TestsStartedCount == 0, 0.0,
+          todouble(TestsPassedCount) / todouble(TestsStartedCount)
+      )
+      | extend SuccessRatePercent = round(SuccessRate * 100, 2)
+      | project 
+          Date,
+          language,
+          modernizationType,
+          UserSource,
+          TestsStartedCount,
+          TestsPassedCount,
+          SuccessRate,
+          SuccessRatePercent
+  }
+  ```
+
+- User-level cohort helpers (MAU/MEU)
+  - mau_cli_users_helper
+  ```kusto
+  mau_cli_users_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. (end - 1s))
+      | where timestamp >= datetime(2025-05-20)
+      | where operation_Name == 'java/appcat/command'
+      | extend message = parse_json(message)
+      | extend user_source = iff(tobool(message.internal), 'internal', 'external')
+      | extend dimensions = parse_json(customDimensions)
+      | extend callerId = tostring(dimensions.callerid)
+      | where callerId == 'appcat' // callerId=='appcat' means that user is using appcat CLI instead of VSCode
+      | extend DevDeviceId = tostring(dimensions.devdeviceid)
+      | distinct DevDeviceId, user_source, Date=bin(timestamp, 1d);
+  }
+  ```
+
+  - mau_vscode_users_helper
+  ```kusto
+  mau_vscode_users_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+      | where ServerTimestamp between (start .. (end - 1s))
+      | where ServerTimestamp >= datetime(2025-05-20)
+      | where ExtensionName has "migrate-java-to-azure"
+      | where EventName !has 'migrate-java-to-azure/info' // all the operations but activation events
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+      | project DevDeviceId, user_source, Date=bin(ServerTimestamp, 1d)
+      | union (
+      cluster('ddtelvscode.kusto.windows.net').database('VSCode').table('RawEventsVSCode')
+      | where ServerUploadTimestamp between (startofday(start) .. startofday(end) -1s)
+      | where EventName == "monacoworkbench/activateplugin"
+      | where Properties.id == 'vscjava.migrate-java-to-azure'
+      | where Properties.reason !in ('onStartupFinished') and Properties.reason !has 'pom.xml' and Properties.reason !has 'onLanguage:java'
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+      | project DevDeviceId, user_source, Date=bin(ServerUploadTimestamp, 1d)
+      )
+      // MCP telemetry
+      | union (
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. (end - 1s))
+      | where timestamp >= datetime(2025-07-31)
+      | where operation_Name startswith 'java/migrateassistant'
+      | extend dimensions = parse_json(customDimensions)
+      | extend user_source = iff(tobool(dimensions.internal), 'internal', 'external')
+      | extend DevDeviceId = tostring(dimensions.devdeviceid)
+      | project DevDeviceId, user_source, Date=bin(timestamp, 1d)
+      )
+      | distinct DevDeviceId,user_source,Date;
+  }
+  ```
+
+  - meu_cli_users_helper
+  ```kusto
+  meu_cli_users_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. (end - 1s))
+      | where operation_Name == 'java/appcat/command'
+      | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+      | extend callerId = tostring(customDimensions.callerid)
+      | where callerId == 'appcat' // callerId=='appcat' means that user is using appcat CLI instead of VSCode
+      | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+      | extend Date = bin(timestamp, 1d)
+      | summarize dcount(Date) by DevDeviceId, user_source
+      | where dcount_Date >=2
+      | project DevDeviceId, user_source, dcount_Date
+  }
+  ```
+
+  - meu_vscode_users_helper
+  ```kusto
+  meu_vscode_users_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+      | where ServerTimestamp between (start .. (end - 1s))
+      | where ServerTimestamp >= datetime(2025-05-20)
+      | where ExtensionName has "migrate-java-to-azure"
+      | where EventName !has 'migrate-java-to-azure/info' // all the operations but activation events
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+      | project DevDeviceId, user_source, Date=bin(ServerTimestamp,1d)
+      | union (
+      cluster('ddtelvscode.kusto.windows.net').database('VSCode').table('RawEventsVSCode')
+      | where ServerUploadTimestamp between (startofday(start) .. startofday(end) -1s)
+      | where EventName == "monacoworkbench/activateplugin"
+      | where Properties.id == 'vscjava.migrate-java-to-azure'
+      | where Properties.reason !in ('onStartupFinished') and Properties.reason !has 'pom.xml' and Properties.reason !has 'onLanguage:java'
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+      | project DevDeviceId, user_source, Date=bin(ServerUploadTimestamp,1d)
+      )
+      // MCP telemetry
+      | union (
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. (end - 1s))
+      | where timestamp >= datetime(2025-07-31)
+      | where operation_Name startswith 'java/migrateassistant'
+      | extend dimensions = parse_json(customDimensions)
+      | extend user_source = iff(tobool(dimensions.internal), 'internal', 'external')
+      | extend DevDeviceId = tostring(dimensions.devdeviceid)
+      | project DevDeviceId, user_source, Date=bin(timestamp,1d)
+      )
+      | summarize dcount(Date) by DevDeviceId, user_source
+      | where dcount_Date >=2
+      | project DevDeviceId, user_source, dcount_Date
+  }
+  ```
+
+- App/Project uniqueness and composition
+  - unique_app_vscode_records_helper
+  ```kusto
+  unique_app_vscode_records_helper(start:datetime, end:datetime)
+  {
+      let migrationAppIds = cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | extend p = parse_json(Properties)
+          | extend AppId = tostring(p['hashedappid'])
+          | where isnotempty(AppId)
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+          | project Date=bin(ServerTimestamp,1d), AppId, user_source,DevDeviceId;
+      let MCPmigrationAppIds = cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-31)
+          | where operation_Name startswith 'java/migrateassistant'
+          | extend dimensions = parse_json(customDimensions)
+          | extend AppId = tostring(dimensions.hashedappid)
+          | where isnotempty(AppId)
+          | extend user_source = iff(tobool(dimensions.internal), 'internal', 'external')
+          | project Date=bin(timestamp,1d), AppId, user_source,DevDeviceId=tostring(customDimensions.devdeviceid);
+      let appcatInVScodeAppIds = cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-05-20)
+          | where operation_Name == 'java/appcat/project'
+          | extend dimensions = parse_json(customDimensions)
+          | extend callerId = tostring(dimensions.callerid)
+          | where callerId has "vscjava.migrate-java-to-azure"
+          | extend AppId = tostring(dimensions.project_identity)
+          | where isnotempty(AppId)
+          | extend data = parse_json(message)
+          | extend user_source=iff(tobool(data.internal), 'internal', 'external')
+          | project Date=bin(timestamp,1d), AppId,user_source,DevDeviceId=tostring(customDimensions.devdeviceid);
+          union migrationAppIds,MCPmigrationAppIds, appcatInVScodeAppIds
+  }
+  ```
+
+  - unique_app_cli_records_helper
+  ```kusto
+  unique_app_cli_records_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. (end - 1s))
+      | where timestamp >= datetime(2025-05-20)
+      | where operation_Name == 'java/appcat/project'
+      | extend dimensions = parse_json(customDimensions)
+      | extend appcatVersion = tostring(dimensions.appcatversion)
+      | where appcatVersion != 'latest'
+      | extend callerId = tostring(dimensions.callerid)
+      | where callerId == 'appcat'
+      | extend AppId = tostring(dimensions.project_identity)
+      | where isnotempty(AppId)
+      | extend data = parse_json(message)
+      | extend user_source=iff(tobool(data.internal), 'internal', 'external')
+      | project Date=bin(timestamp,1d), AppId,user_source,DevDeviceId=tostring(customDimensions.devdeviceid);
+  }
+  ```
+
+  - unique_project_cli_records_helper
+  ```kusto
+  unique_project_cli_records_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. (end - 1s))
+      | where timestamp >= datetime(2025-05-20)
+      | where operation_Name == 'java/appcat/project'
+      | extend dimensions = parse_json(customDimensions)
+      | extend appcatVersion = tostring(dimensions.appcatversion)
+      | where appcatVersion != 'latest'
+      | extend callerId = tostring(dimensions.callerid)
+      | where callerId == 'appcat'
+      | extend projectId = tostring(dimensions.hashed_project_id)
+      | where isnotempty(projectId)
+      | extend data = parse_json(message)
+      | extend user_source=iff(tobool(data.internal), 'internal', 'external')
+      | project Date=bin(timestamp,1d), projectId,user_source,DevDeviceId=tostring(customDimensions.devdeviceid);
+  }
+  ```
+
+  - unique_project_vscode_records_helper
+  ```kusto
+  unique_project_vscode_records_helper
+  {
+      let migrationProjectIds = cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | extend projectId = tostring(Properties['hashedprojectid'])
+          | where isnotempty(projectId)
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+          | project Date=bin(ServerTimestamp,1d), projectId, user_source,DevDeviceId;
+      let MCPmigrationProjectIds = cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-31)
+          | where operation_Name startswith 'java/migrateassistant'
+          | extend projectId = tostring(customDimensions.hashedprojectid)
+          | where isnotempty(projectId)
+          | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+          | project Date=bin(timestamp,1d), projectId, user_source,DevDeviceId=tostring(customDimensions.devdeviceid);
+      let appcatInVScodeProjectIds = cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-05-20)
+          | where operation_Name == 'java/appcat/project'
+          | extend callerId = tostring(customDimensions.callerid)
+          | where callerId has "vscjava.migrate-java-to-azure"
+          | extend projectId = tostring(customDimensions.hashed_project_id)
+          | where isnotempty(projectId)
+          | extend data = parse_json(message)
+          | extend user_source=iff(tobool(data.internal), 'internal', 'external')
+          | project Date=bin(timestamp,1d), projectId,user_source,DevDeviceId=tostring(customDimensions.devdeviceid);
+          union migrationProjectIds,MCPmigrationProjectIds, appcatInVScodeProjectIds
+  }
+  ```
+
+  - avg_users_per_app_helper
+  ```kusto
+  avg_users_per_app_helper(start:datetime, end:datetime)
+  {
+      union unique_app_vscode_records_helper(start,end), unique_app_cli_records_helper(start,end)
+      | summarize DistinctDevelopers = dcount(DevDeviceId) by AppId
+      | summarize AvgDevelopersPerApp = avg(DistinctDevelopers), MaxDevelopersPerApp = max(DistinctDevelopers)
+  }
+  ```
+
+  - modules_per_project_helper
+  ```kusto
+  modules_per_project_helper(start:datetime, end:datetime)
+  {
+      let modulesInfo = materialize (
+          cluster('https://ddtelai.kusto.windows.net/').database('Copilot').table('RawEventsTraces') 
+          | where operation_Name has "java/migrateassistant" or operation_Name has "java/appcat"
+          | where timestamp between (start .. end)
+          | extend projectId = tostring(customDimensions.hashedprojectid), moduleId = tostring(customDimensions.hashedappid)
+          | where isnotempty(projectId) and isnotempty(moduleId)
+          | project DevDeviceId = tostring(customDimensions.devdeviceid), moduleId,projectId
+          | union (
+              cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+              | where ServerTimestamp between (start .. (end - 1s))
+              | where ServerTimestamp >= datetime(2025-08-10)
+              | where ExtensionName has "migrate-java-to-azure"
+              | where EventName has "java/migrateassistant/projectsize"
+              | extend projectId = tostring(Properties.hashedprojectid), moduleId = tostring(Properties.hashedappid), correlationId = tostring(Properties['correlationid'])
+              | where isnotempty(projectId) and isnotempty(moduleId)
+              | project DevDeviceId, moduleId,projectId
+          )
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+          | project-away  DevDeviceId1
+      );
+      modulesInfo    
+      | summarize  ModuleCount = dcount(moduleId) by projectId,user_source
+      | union (
+          modulesInfo
+          | summarize  ModuleCount = dcount(moduleId) by projectId
+          | extend user_source = "total"
+      )
+  }
+  ```
+
+- Assessment helpers
+  - assessment_run_records_helper
+  ```kusto
+  assessment_run_records_helper(start:datetime, end:datetime)
+  {
+      let assessment_run_data = 
+      cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+      | where ServerTimestamp  between (start .. (end - 1s))
+      | where ServerTimestamp >= datetime(2025-05-20)
+      | where ExtensionName has "migrate-java-to-azure"
+      | where EventName has "java/migrateassistant/command"
+      | extend command = tostring(Properties.command) 
+      | where command in ('migrate.java.assessment')
+      | project DevDeviceId, ServerTimestamp, ExtensionVersion
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+      | project DevDeviceId, ServerTimestamp, user_source, ExtensionVersion
+      // union users who trigger assessment by copilot chat
+      | union (
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has 'java/migrateassistant/tool/invoke'
+          | extend tool=tostring(Properties.invokedtoolid)
+          | where tool == 'assessApplication'
+          | project DevDeviceId, ServerTimestamp, ExtensionVersion
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+          | project DevDeviceId, ServerTimestamp, user_source, ExtensionVersion
+      )
+      // union users in MCP mode
+      | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-29)
+          | where operation_Name has "java/migrateassistant/appcat/"
+          | extend message = parse_json(message)
+          | extend user_source = iff(tobool(message.internal), 'internal', 'external')
+          | extend dimensions = parse_json(customDimensions)
+          | extend DevDeviceId = tostring(dimensions.devdeviceid), ServerTimestamp= timestamp
+          | project DevDeviceId, ServerTimestamp, user_source
+      );
+      assessment_run_data
+      | project DevDeviceId, ServerTimestamp, user_source, ExtensionVersion
+  }
+  ```
+
+  - start_assessment_occurrence_cli_vscode_helper
+  ```kusto
+  start_assessment_occurrence_cli_vscode_helper(start:datetime, end:datetime)
+  {
+      let appcat_cli_occurences = 
+      cluster('https://ddtelai.kusto.windows.net/').database('Copilot').table('RawEventsTraces') 
+      | where timestamp between (start .. end)
+      | where operation_Name == 'java/appcat/command'
+      | extend data = parse_json(message)
+      | extend command = tostring(data.message)
+      | where command == 'analyze'
+      | extend dimensions = parse_json(customDimensions)
+      | extend appcatVersion = tostring(dimensions.appcatversion)
+      | where appcatVersion != 'latest'
+      | extend status = tostring(dimensions.status)
+      | where status == 'start'
+      | extend callerid = tostring(dimensions.callerid)
+      | where callerid == 'appcat'
+      | extend user_source=iff(tobool(customDimensions.internal), 'internal', 'external')
+      | project ServerTimestamp=timestamp, DevDeviceId=tostring(dimensions.devdeviceid), user_source;
+      let vscode_occurences = 
+      cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+      | where ServerTimestamp  between (start .. (end - 1s))
+      | where ServerTimestamp >= datetime(2025-05-20)
+      | where ExtensionName has "migrate-java-to-azure"
+      | where EventName has "java/migrateassistant/command"
+      | extend command = tostring(Properties.command) 
+      | where command in ('migrate.java.assessment')
+      | project DevDeviceId, ServerTimestamp, ExtensionVersion
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+      | project DevDeviceId, ServerTimestamp,user_source;
+      union appcat_cli_occurences, vscode_occurences;
+  }
+  ```
+
+  - assessment_success_occurrence_vscode_helper
+  ```kusto
+  assessment_success_occurrence_vscode_helper(start:datetime, end:datetime)
+  {
+          let validAppTable = 
+          cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. end)
+          | where operation_Name == "java/appcat/project"
+          | extend AppId = tostring(customDimensions.project_identity)
+          | where isnotempty(AppId)
+          | extend callerid = tostring(customDimensions.callerid)
+          | where callerid has "vscjava.migrate-java-to-azure"
+          | extend DevDeviceId=tostring(customDimensions.devdeviceid)
+          | distinct  operation_Id;
+          cluster('https://ddtelai.kusto.windows.net/').database('Copilot').table('RawEventsTraces') 
+          | where timestamp between (start .. end)
+          | where operation_Name == 'java/appcat/report'
+          | extend appcatVersion = tostring(customDimensions.appcatversion)
+          | where appcatVersion != 'latest'
+          | extend callerid = tostring(customDimensions.callerid)
+          | where callerid has "vscjava.migrate-java-to-azure"
+          | extend user_source=iff(tobool(customDimensions.internal), 'internal', 'external')
+          | where operation_Id in (validAppTable)
+          | distinct DevDeviceId=tostring(customDimensions.devdeviceid), user_source, operation_Id
+  }
+  ```
+
+  - assessment_success_occurrence_cli_vscode_helper
+  ```kusto
+  assessment_success_occurrence_cli_vscode_helper(start:datetime, end:datetime)
+  {
+          let validAppTable = 
+          cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. end)
+          | where operation_Name == "java/appcat/project"
+          | extend AppId = tostring(customDimensions.project_identity)
+          | where isnotempty(AppId)
+          | extend DevDeviceId=tostring(customDimensions.devdeviceid)
+          | distinct  operation_Id;
+          cluster('https://ddtelai.kusto.windows.net/').database('Copilot').table('RawEventsTraces') 
+          | where timestamp between (start .. end)
+          | where operation_Name == 'java/appcat/report'
+          | extend appcatVersion = tostring(customDimensions.appcatversion)
+          | where appcatVersion != 'latest'
+          | extend user_source=iff(tobool(customDimensions.internal), 'internal', 'external')
+          | where operation_Id in (validAppTable)
+          | extend callerid = tostring(customDimensions.callerid)
+          | where callerid == 'appcat' or callerid has "vscjava.migrate-java-to-azure"
+          | distinct DevDeviceId=tostring(customDimensions.devdeviceid), user_source, operation_Id
+  }
+  ```
+
+  - unique_app_assess_records_helper
+  ```kusto
+  unique_app_assess_records_helper(start:datetime, end:datetime)
+  {
+      let assessAppIds = cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-05-20)
+          | where operation_Name == 'java/appcat/project'
+          | extend dimensions = parse_json(customDimensions)
+          | extend callerId = tostring(dimensions.callerid)
+          | where callerId has "vscjava.migrate-java-to-azure" or callerId == "appcat"
+          | extend AppId = tostring(dimensions.project_identity)
+          | extend appcatVersion = tostring(dimensions.appcatversion)
+          | where appcatVersion != 'latest'
+          | where isnotempty(AppId)
+          | extend data = parse_json(message)
+          | extend user_source=iff(tobool(data.internal), 'internal', 'external')
+          | project Date=bin(timestamp,1d), AppId,user_source;
+      assessAppIds
+  }
+  ```
+
+  - unique_app_assessmentreport_records_helper
+  ```kusto
+  unique_app_assessmentreport_records_helper(start:datetime, end:datetime)
+  {
+      let validAppTable = 
+      cluster('ddtelai').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. end)
+      | where operation_Name == "java/appcat/project"
+      | extend AppId = tostring(customDimensions.project_identity)
+      | where isnotempty(AppId)
+      | extend DevDeviceId=tostring(customDimensions.devdeviceid)
+      | project operation_Id,AppId, Date=bin(timestamp,1d),DevDeviceId,customDimensions;
+      let reportTable = 
+          cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. end)
+          | where operation_Name == 'java/appcat/report'
+          | distinct operation_Id;
+      validAppTable
+      | extend callerid = tostring(customDimensions.callerid)
+      | where callerid == 'appcat' or callerid has "vscjava.migrate-java-to-azure"
+      | where operation_Id in (reportTable)
+      | extend appcatVersion = tostring(customDimensions.appcatversion)
+      | where appcatVersion != 'latest'
+      | project AppId, DevDeviceId,Date
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+      | project user_source, AppId,DevDeviceId,Date
+  }
+  ```
+
+  - assessment_run_records_cli_vscode_helper
+  ```kusto
+  assessment_run_records_cli_vscode_helper(start:datetime, end:datetime)
+  {
+      let appcat_cli_occurences = 
+      cluster('https://ddtelai.kusto.windows.net/').database('Copilot').table('RawEventsTraces') 
+      | where timestamp between (start .. end)
+      | where operation_Name == 'java/appcat/command'
+      | extend data = parse_json(message)
+      | extend command = tostring(data.message)
+      | where command == 'analyze'
+      | extend dimensions = parse_json(customDimensions)
+      | extend appcatVersion = tostring(dimensions.appcatversion)
+      | where appcatVersion != 'latest'
+      | extend status = tostring(dimensions.status)
+      | where status == 'start'
+      | extend callerid = tostring(dimensions.callerid)
+      | where callerid == 'appcat'
+      | project ServerTimestamp=timestamp, DevDeviceId=tostring(dimensions.devdeviceid)
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+      | project ServerTimestamp, DevDeviceId, user_source;
+      let assessment_run_data = 
+      cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+      | where ServerTimestamp  between (start .. (end - 1s))
+      | where ServerTimestamp >= datetime(2025-05-20)
+      | where ExtensionName has "migrate-java-to-azure"
+      | where EventName has "java/migrateassistant/command"
+      | extend command = tostring(Properties.command) 
+      | where command in ('migrate.java.assessment')
+      | project DevDeviceId, ServerTimestamp, ExtensionVersion
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+      | project DevDeviceId, ServerTimestamp, user_source, ExtensionVersion
+      // union users who trigger assessment by copilot chat
+      | union (
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has 'java/migrateassistant/tool/invoke'
+          | extend tool=tostring(Properties.invokedtoolid)
+          | where tool == 'assessApplication'
+          | project DevDeviceId, ServerTimestamp, ExtensionVersion
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+          | project DevDeviceId, ServerTimestamp, user_source, ExtensionVersion
+      )
+      // union users in MCP mode
+      | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-29)
+          | where operation_Name has "java/migrateassistant/appcat/"
+          | extend message = parse_json(message)
+          | extend user_source = iff(tobool(message.internal), 'internal', 'external')
+          | extend dimensions = parse_json(customDimensions)
+          | extend DevDeviceId = tostring(dimensions.devdeviceid), ServerTimestamp= timestamp
+          | project DevDeviceId, ServerTimestamp, user_source
+      );
+      union assessment_run_data,appcat_cli_occurences
+      | project DevDeviceId, ServerTimestamp, user_source, ExtensionVersion
+  }
+  ```
+
+- Migration and build helpers
+  - migration_plan_records_helper
+  ```kusto
+  migration_plan_records_helper(start:datetime, end:datetime)
+  {
+      let agent_event =
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has 'java/migrateassistant/tool/invoke'
+          | extend tool=tostring(Properties.invokedtoolid)
+          | where tool == 'createMigrationPlan'
+          | extend AppId = tostring(Properties['hashedappid'])
+          //| where isnotempty(AppId)
+          | project Properties, ServerTimestamp,VSCodeSessionId, DevDeviceId,AppId
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+          | project ServerTimestamp, DevDeviceId, user_source,AppId,Properties;
+      let mcp_event =
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp  between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-31)
+          | where operation_Name == "java/migrateassistant/tool/invoke"
+          | extend properties = parse_json(customDimensions)
+          | extend invokedToolId = tostring(properties["invokedtoolid"])
+          | where invokedToolId == 'appmod-run-task'
+          | extend DevDeviceId = tostring(properties.devdeviceid)
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source = iff(tobool(IsInternal), 'internal', 'external')
+          | extend AppId = tostring(properties.hashedappid)
+          //| where isnotempty(AppId)
+          | project Properties=properties, ServerTimestamp=timestamp, DevDeviceId,user_source, AppId;
+      union agent_event,mcp_event
+  }
+  ```
+
+  - migration_records_helper
+  ```kusto
+  migration_records_helper(start:datetime, end:datetime)
+  {
+      let users_java_project =
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-08-10)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has "java/migrateassistant/projectsize"
+          | extend AppId = tostring(Properties['hashedappid'])
+          | distinct DevDeviceId;
+      let command_event = 
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has "java/migrateassistant/command"
+          | where tostring(Properties.command) in ('migrate.java.formula.run', 'java.migrateassistant.handleMigrate')
+          | extend migrateaction=tostring(Properties.migrateaction), migrateby = tostring(Properties.migrateby)
+          | where migrateaction == 'migrate' and migrateby != "upgrade"
+          | extend source = tostring(Properties.source)
+          | extend source = iff(isempty(source), 'unknown', source)
+          | project source, ServerTimestamp,VSCodeSessionId, DevDeviceId,Properties, ExtensionVersion
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+          | extend  isJava = iff(parse_version(ExtensionVersion) >= parse_version("1.3.0"), DevDeviceId in (users_java_project), true)
+          | where isJava == true
+          | project source, ServerTimestamp,VSCodeSessionId, DevDeviceId, user_source,Properties,ExtensionVersion;
+      let command_event_sessionIds =
+          command_event 
+          | distinct VSCodeSessionId;
+      let vscodetool_sole_event =
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has 'java/migrateassistant/tool/invoke'
+          | extend tool=tostring(Properties.invokedtoolid)
+          | where tool has 'createMigrationPlan'
+          | project Properties, ServerTimestamp,VSCodeSessionId, DevDeviceId
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+          | where VSCodeSessionId !in (command_event_sessionIds)
+          | project source="copilotChat", ServerTimestamp,VSCodeSessionId, DevDeviceId, user_source,Properties;
+      let mcp_sole_event =
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp  between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-31)
+          | where operation_Name == "java/migrateassistant/tool/invoke"
+          | extend properties = parse_json(customDimensions)
+          | extend invokedToolId = tostring(properties["invokedtoolid"])
+          | where invokedToolId has 'appmod-run-task'
+          | extend DevDeviceId = tostring(properties.devdeviceid)
+          | extend user_source  = iff(tobool(properties.internal), 'internal', 'external')
+          | project properties, ServerTimestamp=timestamp, DevDeviceId,user_source, callersessionid=tostring(properties.callersessionid),operation_ParentId, correlationId = tostring(properties.correlationid)
+          | extend VSCodeSessionId = iff(isnotempty(callersessionid), callersessionid, operation_ParentId)
+          | where VSCodeSessionId !in (command_event_sessionIds) 
+          | project source="copilotChat", ServerTimestamp,VSCodeSessionId, DevDeviceId, user_source,Properties=properties;
+      union command_event, vscodetool_sole_event, mcp_sole_event
+  }
+  ```
+
+  - migration_records_with_appid_helper
+  ```kusto
+  migration_records_with_appid_helper(start:datetime, end:datetime)
+  {
+      let java_project_info =
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-08-10)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has "java/migrateassistant/projectsize"
+          | extend AppId = tostring(Properties['hashedappid']), correlationId = tostring(Properties['correlationid'])
+          | distinct DevDeviceId,AppId,correlationId;
+      let command_event = 
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has "java/migrateassistant/command"
+          | where tostring(Properties.command) in ('migrate.java.formula.run', 'java.migrateassistant.handleMigrate')
+          | extend migrateaction=tostring(Properties.migrateaction), migrateby = tostring(Properties.migrateby)
+          | where migrateaction == 'migrate' and migrateby != "upgrade"
+          | extend source = tostring(Properties.source)
+          | extend source = iff(isempty(source), 'unknown', source)
+          | project source, ServerTimestamp,VSCodeSessionId, DevDeviceId,Properties, ExtensionVersion, correlationId = tostring(Properties['correlationid'])
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+          | extend  isJava = iff(parse_version(ExtensionVersion) >= parse_version("1.3.0"), DevDeviceId in (java_project_info | project DevDeviceId), true)
+          | where isJava == true
+          | join kind=leftouter (java_project_info) on correlationId
+          | project source, ServerTimestamp,VSCodeSessionId, DevDeviceId, user_source,AppId,Properties,ExtensionVersion;
+      let command_event_sessionIds =
+          command_event 
+          | distinct VSCodeSessionId;
+      let agent_sole_event =
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has 'java/migrateassistant/tool/invoke'
+          | extend tool=tostring(Properties.invokedtoolid)
+          | where tool has 'createMigrationPlan'
+          | extend AppId = tostring(Properties['hashedappid'])
+          //| where isnotempty(AppId)
+          | project Properties, ServerTimestamp,VSCodeSessionId, DevDeviceId,AppId
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+          | where VSCodeSessionId !in (command_event_sessionIds)
+          | project source="copilotChat", ServerTimestamp,VSCodeSessionId, DevDeviceId, user_source,AppId,Properties;
+      let mcp_sole_event =
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp  between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-31)
+          | where operation_Name == "java/migrateassistant/task/run"
+          | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+          | project customDimensions, ServerTimestamp=timestamp, DevDeviceId, callersessionid=tostring(customDimensions.callersessionid),operation_ParentId, AppId = tostring(customDimensions.hashedappid)
+          | extend VSCodeSessionId = iff(isnotempty(callersessionid), callersessionid, operation_ParentId)
+          | where VSCodeSessionId !in (command_event_sessionIds) 
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal), 'internal', 'external')
+          | project source="copilotChat", ServerTimestamp,VSCodeSessionId, DevDeviceId,AppId, user_source,Properties=customDimensions;
+      union command_event, agent_sole_event, mcp_sole_event
+  }
+  ```
+
+  - start_buildfix_users_helper
+  ```kusto
+  start_buildfix_users_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+      | where ServerTimestamp between (start .. (end - 1s))
+      | where ServerTimestamp >= datetime(2025-05-20)
+      | where ExtensionName has "migrate-java-to-azure"
+      | where EventName has "javamigrationcopilot/buildfix"
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(tobool(IsInternal1), 'internal', 'external')
+      | extend timestamp = ServerTimestamp
+      // MCP telemetry
+      | union (
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp between (start .. (end - 1s))
+      | where timestamp > datetime(2025-07-01)
+      | where operation_Name has "java/migrateassistant/buildfix"
+      | extend dimensions = parse_json(customDimensions)
+      | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(tobool(IsInternal1), 'internal', 'external')
+      )
+      | distinct timestamp,DevDeviceId, user_source,type = "Buildfix start"
+  }
+  ```
+
+  - buildfix_output_records_helper
+  ```kusto
+  buildfix_output_records_helper(start:datetime, end:datetime)
+  {
+      let rawData = materialize (
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has "javamigrationcopilot/buildfix/output"
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source = iff(tobool(IsInternal1), 'internal', 'external')
+          | extend success = iff(tostring(Properties.result) == "SUCCEEDED", true, false)
+          | extend timestamp = ServerTimestamp, mode = 'non-mcp'
+          | extend moduleId = tostring(Properties.hashedappid)
+          // MCP telemetry
+          | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp > datetime(2025-07-01)
+          | where operation_Name == "java/migrateassistant/buildFix/output"
+          | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+          | extend success = iff(tostring(customDimensions.result)=="success", true, false)
+          | extend DevDeviceId = tostring(customDimensions.devdeviceid), mode = 'mcp'
+          | extend correlationId = tostring(customDimensions.correlationid)
+          | extend moduleId = tostring(customDimensions.hashedappid)
+          )
+          | project timestamp, DevDeviceId,correlationId,moduleId, user_source, success,mode
+      );
+      rawData
+      | where isnotempty(correlationId)
+      | summarize arg_max(timestamp,*) by correlationId
+      | union (
+          rawData
+          | where isempty( correlationId)
+      )
+  }
+  ```
+
+  - build_result_records_with_appid_helper
+  ```kusto
+  build_result_records_with_appid_helper(start:datetime, end:datetime)
+  {
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has "javamigrationcopilot/buildfix/output"
+          | extend success = iff(tostring(Properties.result) == "SUCCEEDED", true, false)
+          | extend timestamp = ServerTimestamp, mode = 'non-mcp'
+              // no module id
+          | extend result = tostring(Properties.result)
+          // MCP telemetry, buildfix output
+          | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp > datetime(2025-07-01)
+          | where operation_Name == "java/migrateassistant/buildFix/output"
+          | extend result = tostring(customDimensions.result)
+          | extend success = iff(tostring(customDimensions.result) has "success", true, false)
+          | extend DevDeviceId = tostring(customDimensions.devdeviceid), mode = 'mcp'
+          | extend correlationId = tostring(customDimensions.correlationid)
+          | extend AppId = tostring(customDimensions.hashedappid),VSCodeSessionId = tostring(customDimensions.callersessionid)
+          )
+          // MCP telemetry, build events
+          | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp > datetime(2025-07-01)
+          | where operation_Name == "java/migrateassistant/buildFix/build"
+          | extend result = tostring(customDimensions.result)
+          | extend success = iff(tostring(customDimensions.result) has "success", true, false)
+          | extend DevDeviceId = tostring(customDimensions.devdeviceid), mode = 'mcp'
+          | extend correlationId = tostring(customDimensions.correlationid)
+          | extend AppId = tostring(customDimensions.hashedappid),VSCodeSessionId = tostring(customDimensions.callersessionid)
+          )
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source = iff(tobool(IsInternal1), 'internal', 'external')
+          | project timestamp, DevDeviceId,correlationId,AppId, user_source, success,mode,result, VSCodeSessionId
+  }
+  ```
+
+  - build_success_records_helper
+  ```kusto
+  build_success_records_helper(start:datetime, end:datetime)
+  {
+      let rawData = materialize (
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure"
+          | where EventName has "javamigrationcopilot/buildfix/output"
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source = iff(tobool(IsInternal1), 'internal', 'external')
+          | extend success = iff(tostring(Properties.result) == "SUCCEEDED", true, false)
+          | extend timestamp = ServerTimestamp, mode = 'non-mcp'
+          | extend result = tostring(Properties.result)
+          // MCP telemetry, buildfix output
+          | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp > datetime(2025-07-01)
+          | where operation_Name == "java/migrateassistant/buildFix/output"
+          | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+          | extend result = tostring(customDimensions.result)
+          | extend success = iff(tostring(customDimensions.result) has "success", true, false)
+          | extend DevDeviceId = tostring(customDimensions.devdeviceid), mode = 'mcp'
+          | extend correlationId = tostring(customDimensions.correlationid)
+          )
+          // MCP telemetry, build events
+          | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp > datetime(2025-07-01)
+          | where operation_Name == "java/migrateassistant/buildFix/build"
+          | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+          | extend result = tostring(customDimensions.result)
+          | extend success = iff(tostring(customDimensions.result) has "success", true, false)
+          | extend DevDeviceId = tostring(customDimensions.devdeviceid), mode = 'mcp'
+          | extend correlationId = tostring(customDimensions.correlationid)
+          )
+          | project timestamp, DevDeviceId,correlationId, user_source, success,mode,result
+      );
+      rawData
+      | where isnotempty(correlationId)
+      | summarize arg_max(timestamp,*) by correlationId
+      | union (
+          rawData
+          | where isempty( correlationId)
+      )
+  }
+  ```
+
+  - unique_app_code_remediation_records_helper
+  ```kusto
+  unique_app_code_remediation_records_helper(start:datetime, end:datetime)
+  {
+      let latest_query = migration_records_with_appid_helper(start,end) | project Date=bin(ServerTimestamp,1d), AppId, user_source;
+          // before 2025-8-26, we only have below data, we can deprecate below query on 2025-09-23
+      let migrationAppIds_toDeprecate = cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. (end - 1s))
+          | where ServerTimestamp >= datetime(2025-05-20)
+          | where ExtensionName has "migrate-java-to-azure" and EventName has "java/migrateassistant/formula/apply"
+          | extend p = parse_json(Properties)
+          | extend AppId = tostring(p['hashedappid'])
+          | where isnotempty(AppId)
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
+          | project Date=bin(ServerTimestamp,1d), AppId, user_source;
+      let MCPmigrationAppIds_toDeprecate = cluster('ddtelai').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp >= datetime(2025-07-31)
+          | where operation_Name startswith 'java/migrateassistant/formula/apply' or operation_Name startswith "java/migrateassistant/kb/applied"
+          | extend dimensions = parse_json(customDimensions)
+          | extend AppId = tostring(dimensions.hashedappid)
+          | where isnotempty(AppId)
+          | extend user_source = iff(tobool(dimensions.internal), 'internal', 'external')
+          | project Date=bin(timestamp,1d), AppId, user_source;
+          union latest_query,migrationAppIds_toDeprecate,MCPmigrationAppIds_toDeprecate
+  }
+  ```
+
+- Validation and quality checks
+  - cvefix_records_helper
+  ```kusto
+  cvefix_records_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp > datetime(2025-07-01) and timestamp between (start .. (end - 1s))
+      | where operation_Name == "java/migrateassistant/cveFix/output"
+      | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+      | extend success = iff(tostring(customDimensions.result)=="success", true, false)
+      | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+      | distinct  DevDeviceId, success,user_source,timestamp 
+  }
+  ```
+
+  - cvefix_result_records_with_appid_helper
+  ```kusto
+  cvefix_result_records_with_appid_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp > datetime(2025-07-01) and timestamp between (start .. (end - 1s))
+      | where operation_Name == "java/migrateassistant/cveFix/output"
+      | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+      | extend success = iff(tostring(customDimensions.result)=="success", true, false)
+      | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+      | extend correlationId = tostring(customDimensions.correlationid)
+      | extend AppId = tostring(customDimensions.hashedappid)
+      | project DevDeviceId, success,user_source,timestamp,AppId,correlationId, VSCodeSessionId = tostring(customDimensions.callersessionid)
+  }
+  ```
+
+  - utfix_records_helper
+  ```kusto
+  utfix_records_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp > datetime(2025-07-01) and timestamp between (start .. (end - 1s))
+      | where operation_Name == "java/migrateassistant/testFix/output"
+      | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+      | extend success = iff(tostring(customDimensions.result)=="success", true, false)
+      | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+      | distinct  DevDeviceId, success,user_source,timestamp 
+  }
+  ```
+
+  - utfix_result_records_with_appid_helper
+  ```kusto
+  utfix_result_records_with_appid_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp > datetime(2025-07-01) and timestamp between (start .. (end - 1s))
+      | where operation_Name == "java/migrateassistant/testFix/output"
+      | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+      | extend success = iff(tostring(customDimensions.result)=="success", true, false)
+      | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+      | extend AppId = tostring(customDimensions.hashedappid)
+      | extend correlationId = tostring(customDimensions.correlationid)
+      | project DevDeviceId, success,user_source,timestamp,AppId,correlationId,VSCodeSessionId = tostring(customDimensions.callersessionid)
+      | union (
+          cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+          | where timestamp between (start .. (end - 1s))
+          | where timestamp > datetime(2025-07-01)
+          | where operation_Name == "java/migrateassistant/testFix/test"
+          | extend result = tostring(customDimensions.result)
+          | extend success = iff(tostring(customDimensions.result) has "success", true, false)
+          | extend DevDeviceId = tostring(customDimensions.devdeviceid), mode = 'mcp'
+          | extend correlationId = tostring(customDimensions.correlationid)
+          | extend AppId = tostring(customDimensions.hashedappid)
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+          | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+          | project DevDeviceId, success,user_source,timestamp,AppId,correlationId,VSCodeSessionId = tostring(customDimensions.callersessionid)
+          )
+  }
+  ```
+
+  - consistencycheck_records_helper
+  ```kusto
+  consistencycheck_records_helper(start:datetime, end:datetime)
+  {
+      cluster('ddtelai.kusto.windows.net').database('Copilot').RawEventsTraces
+      | where timestamp > datetime(2025-07-01) and timestamp between (start .. (end - 1s))
+      | where operation_Name == "java/migrateassistant/consistency/output"
+      | extend user_source = iff(tobool(customDimensions.internal), 'internal', 'external')
+      | extend result = parse_json(tostring(customDimensions.result))
+      | extend success = iff(result.critical == 0 and result.major == 0, true, false)
+      | extend DevDeviceId = tostring(customDimensions.devdeviceid)
+      | distinct  DevDeviceId, success,user_source,timestamp 
+  }
+  ```
+
+  - code_accept_records_helper
+  ```kusto
+  code_accept_records_helper(start:datetime, end:datetime)
+  {
+      let users = materialize (
+          cluster('https://ama4j.westus2.kusto.windows.net/').database('bi').migration_plan_records_helper(start,end)
+          | distinct DevDeviceId
+      );
+      let CopilotchatRawEvents =
+          cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
+          | where ServerTimestamp between (start .. end)
+          | where ExtensionName == 'GitHub.copilot-chat'
+          | where DevDeviceId in (users);
+      let ConversationDetails = materialize(
+          CopilotchatRawEvents
+          | where EventName == "github.copilot-chat/toolcalldetails"
+          | where Properties has "createMigrationPlan" or (Properties has 'appmod-run-task' and ServerTimestamp >= datetime(2025-07-31))
+          | project conversationId = tostring(Properties.conversationid), Properties.toolcounts, DevDeviceId
+          | distinct conversationId, DevDeviceId
+      );
+      let PanelRequests = 
+          CopilotchatRawEvents
+          | where EventName == "github.copilot-chat/panel.request"
+          | project requestId = tostring(Properties.requestid), conversationId = tostring(Properties.conversationid), DevDeviceId;
+      let PanelFeedback = 
+          CopilotchatRawEvents
+          | where EventName == "github.copilot-chat/panel.edit.feedback"
+          | project outcome = tostring(Properties.outcome), requestId = tostring(Properties.requestid), hasRemainingEdits = tobool(Properties.hasremainingedits), DevDeviceId;
+      // Join conversation details with panel requests
+      let ConversationWithRequests = materialize(
+          ConversationDetails
+          | join kind=leftouter PanelRequests on conversationId, DevDeviceId
+          | distinct requestId, DevDeviceId
+      );
+      // Join with panel feedback
+      let FeedbackWithRequests = materialize(
+          ConversationWithRequests
+          | join kind=leftouter PanelFeedback on requestId
+      );
+      // Join with fact_user_isinternal table
+      FeedbackWithRequests
+      | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
+      | extend user_source = iff(IsInternal == 1, 'internal', 'external')
+      | distinct requestId, outcome, hasRemainingEdits, user_source, DevDeviceId
+      | extend outcome = iif(isempty(outcome), 'Implicit accepted', iif(hasRemainingEdits, 'partially accepted', outcome))
+      | project DevDeviceId, requestId, outcome, user_source, hasRemainingEdits
+  }
+  ```
+
+  - adoption_user_helper
+  ```kusto
+  adoption_user_helper(start:datetime, end:datetime)
+  {
+      // assessment report generated
+      let assessmentReportUsers = assessment_success_occurrence_cli_vscode_helper(start,end);
+      // build fix succussed
+      let buildfixSuccessUsers = buildfix_output_records_helper(start,end) | where success;
+      // code proposal not rejected: we can only find the conversation whose code proposal not rejected
+      let codeAcceptUsers = code_accept_records_helper(start, end) | where outcome != 'rejected';
+      // UT passed
+      let utPassedUsers = utfix_records_helper(start,end) | where success;
+      // cve check passed
+      let cvefixPassedUsers = cvefix_records_helper(start,end) | where success;
+      //consistency check passed
+      let consistencyPassedUsers = consistencycheck_records_helper(start,end) | where success;
+      union assessmentReportUsers, buildfixSuccessUsers,codeAcceptUsers,utPassedUsers,cvefixPassedUsers,consistencyPassedUsers
+      | project DevDeviceId,user_source
+  }
+  ```
+
+- VS family curated sources
+  - RawEventsVSBlessed
+  ```kusto
+  RawEventsVSBlessed()
+  {
+  let whitelist = dynamic(["kuzhong","timong",
+  // Zhishou's team
+  "zhiszhan","xuycao","xiading","menxiao","xiada","dixue","zhiyongli","edburns","juniwang","jinghzhu","yiliu6","haital","rujche","sonwan","fangjimmy","v-ruitang","yili7","haiche","jiangma","ninpan","wepa","kaiqianyang","qiaolei","v-shilichen","feilonghuang","guitarsheng","v-muyaofeng","haochuang","yuwzho","ruodanxie","junbchen","jiahzhu","chenshi","linglingye","zhiyuanliang","emilyzhu","caiqing","zhujiayi","jinjiez","yuwe","v-ruitang","v-shilichen","v-muyaofeng",
+  // Catherine's team
+  "yungez","lianw","wenhaozhang","zlhe","fenzho","haozhan","honc","yueli6","xiaofanzhou","wchi","qianwens","chentony",
+  // Jeff's team
+  "jeffya","jessiehuang","jaeyonglee","xinyizhang","yulinshi","xinrzhu","yiqiu","zhshang","kevinguo","yangtony","seal","hangwan","taoxu","ellieyuan","jialuogan"
+  ]);
+  cluster('ddtelvsraw.kusto.windows.net').database('VS').RawEventsVSBlessed
+  | where Product == "appmod" and UserAlias !in (whitelist)
+  | extend UserSource = iff(IsInternal, 'internal', 'external'), Status = tostring(Properties["status"]), ErrorCode = tostring(Properties["errorcode"]), ExtensionVersion = tostring(Properties["extensionversion"]), HashedAppSolutionId = tostring(Properties["hashedappsolutionid"]), Duration = Measures["duration"];
+  }
+  ```
+
+  - Catalog_Events_IntelliCode_VSConversation
+  ```kusto
+  Catalog_Events_IntelliCode_VSConversation()
+  {
+  let whitelist = dynamic(["kuzhong","timong",
+  // Zhishou's team
+  "zhiszhan","xuycao","xiading","menxiao","xiada","dixue","zhiyongli","edburns","juniwang","jinghzhu","yiliu6","haital","rujche","sonwan","fangjimmy","v-ruitang","yili7","haiche","jiangma","ninpan","wepa","kaiqianyang","qiaolei","v-shilichen","feilonghuang","guitarsheng","v-muyaofeng","haochuang","yuwzho","ruodanxie","junbchen","jiahzhu","chenshi","linglingye","zhiyuanliang","emilyzhu","caiqing","zhujiayi","jinjiez","yuwe","v-ruitang","v-shilichen","v-muyaofeng",
+  // Catherine's team
+  "yungez","lianw","wenhaozhang","zlhe","fenzho","haozhan","honc","yueli6","xiaofanzhou","wchi","qianwens","chentony",
+  // Jeff's team
+  "jeffya","jessiehuang","jaeyonglee","xinyizhang","yulinshi","xinrzhu","yiqiu","zhshang","kevinguo","yangtony","seal","hangwan","taoxu","ellieyuan","jialuogan"
+  ]);
+  cluster('ddtelinsights.kusto.windows.net').database('DDTelInsights').Catalog_Events_IntelliCode_VSConversation
+  | where Properties["vs.copilot.clientid"] == "Microsoft.AppModernization" and UserAlias !in (whitelist)
+  | extend UserSource = iff(IsInternal, 'internal', 'external');
+  }
+  ```
+
 ## Example Queries (with explanations)
 
 1) Java migrate MEU total
@@ -1257,18 +2448,34 @@ The product’s main cluster/database is appmod.westus2.kusto.windows.net/Consol
   | extend ExtensionVersion = tostring(properties.callerversion)
   ```
 
-## Notes and patterns for all tables above
-- All tables are aggregate snapshots keyed by Date and user_source; do not treat them as raw events.
-- Time handling:
-  - Use Date >= startofday(ago(28d)) for 28-day window queries.
-  - When tables have an ingest timestamp column, select latest daily snapshot via arg_max.
-  - Timezone/freshness is undocumented; avoid using current-day partial data for critical reporting.
-- Channel attribution:
-  - user_source distinguishes the channel (e.g., 'vscode', 'cli'); always filter isnotempty(user_source) when needed.
-- Joining and comparisons:
-  - Join on Date and user_source to combine metrics (e.g., users and sessions).
-  - Normalize by channel before comparing metrics across different activity tables.
-- Anti-patterns:
-  - Summing snapshots from different channels without user_source alignment.
-  - Using device-based distinct counts as exact human user counts without caveats.
-  - Ignoring ingest timestamp fields when multiple daily snapshots can exist.
+## Canonical Tables — Additions
+
+### Table name: cluster('https://appmod.westus2.kusto.windows.net/').database('Consolidation').RollingAggregation
+- Priority: High
+- What this table represents: The authoritative daily rolling aggregates backing dashboard metrics, parameterized by Language, ModernizationType, Name, and LookBackWindow (e.g., 28d). Each row represents a snapshot for a given Date and UserSource; Count contains the metric value.
+- Freshness expectations: Multiple daily ingests are possible; select the latest snapshot per (Date, UserSource, Language, ModernizationType, Name, LookBackWindow) using arg_max(DataIngestTimestamp, Count).
+- When to use:
+  - Any time you need the canonical value for dashboard metric families (Users_MAU/MEU, Apps_*, Sessions_*), especially for the standard 28d window.
+  - Building derived rates (build success, CVE-free, test pass) via joins across metric families.
+- Common Filters:
+  - LookBackWindow == '28d'
+  - Date >= startofday(ago(28d)) (optional when recomputing recent windows)
+- Table columns (typical):
+
+  | Column            | Type     | Description |
+  |-------------------|----------|-------------|
+  | Language          | string   | Language family (e.g., Java, C#). |
+  | ModernizationType | string   | migrate, upgrade, or combined scopes. |
+  | Name              | string   | Metric family name (Users_MAU, Apps_BuildStarted, Sessions_CvePassed, etc.). |
+  | LookBackWindow    | string   | Rolling window spec (e.g., '28d'). |
+  | Date              | datetime | Aggregation bucket day. |
+  | UserSource        | string   | Cohort/channel dimension. |
+  | Count             | long     | Metric value for the row. |
+  | DataIngestTimestamp | datetime | Snapshot ingestion time for arg_max selection. |
+
+- Example usage:
+  ```kusto
+  RollingAggregation
+  | where Language == 'Java' and ModernizationType == 'migrate' and Name == 'Users_MEU' and LookBackWindow == '28d'
+  | summarize arg_max(DataIngestTimestamp, Count) by UserSource, day = startofday(Date)
+  ```
