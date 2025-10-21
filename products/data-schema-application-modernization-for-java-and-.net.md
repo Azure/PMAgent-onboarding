@@ -1678,7 +1678,7 @@ let users_appcat =
     | union (
         cluster('ddtelvscode.kusto.windows.net').database('VSCodeExt').RawEventsVSCodeExt
         | where ServerTimestamp between (start .. end)
-        | where EventName == 'vscjava.migrate-java-to-azure/java/migrateassistant/appcat/scan' and (Properties.result == 'success' or Properties.error !has "with exit code: 199" and Properties.error matches regex @"with exit code: \d+")
+        | where EventName == 'vscjava.migrate-java-to-azure/java/migrateassistant/appcat/scan' and (Properties.result == 'success' or Properties.error !has "with exit code: 199" and Properties.error matches regex @"with exit code: \\d+")
         | project DevDeviceId,VSCodeSessionId,ServerTimestamp,ExtensionVersion
     )
     | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
@@ -2508,3 +2508,72 @@ The product’s main cluster/database is appmod.westus2.kusto.windows.net/Consol
   | summarize arg_max(Date, Count) by UserSource
   | summarize TotalMAU = sum(Count)
   ```
+
+## Important Mapping — Additions
+- Natural-language ask → canonical metric mapping:
+  - “number of Java modules using the app mod” → Latest 28-day Apps_All for (Language='Java', ModernizationType='upgrade') with an effective end time and per-cohort latest snapshot. Example:
+    ```kusto
+    let endTime = startofday(now());
+    Get28DayRollingAggregation('Java', 'upgrade', 'Apps_All')
+    | where Date < endTime and isnotempty(UserSource)
+    | summarize arg_max(Date, Count) by UserSource
+    | project UserSource, Modules = Count
+    ```
+  - For an overall total across cohorts, sum only after per-cohort latest snapshots:
+    ```kusto
+    let endTime = startofday(now());
+    Get28DayRollingAggregation('Java', 'upgrade', 'Apps_All')
+    | where Date < endTime and isnotempty(UserSource)
+    | summarize arg_max(Date, Count) by UserSource
+    | summarize TotalModules = sum(Count)
+    ```
+
+## Entity & Counting Rules — Clarification: App vs Module terminology
+- Observations from helper queries indicate hashedappid is sometimes used as a module identifier (moduleId) under the Java upgrade workflows, while separate helpers derive projectId for project-level counts.
+- Practical guidance:
+  - When answering “How many Java modules are using App Mod (upgrade)?” use Apps_* families from Get28DayRollingAggregation with (Language='Java', ModernizationType='upgrade'). Apps_All returns the latest 28-day rolling module count per cohort.
+  - If you need project-level counts instead, use unique_project_* helpers or modules_per_project_helper and aggregate by projectId.
+  - Treat these as snapshot metrics; select one latest completed day per cohort (use endTime = startofday(now()) and arg_max on Date) before optionally summing across disjoint cohorts.
+
+## Query Building Blocks — Addendum: Apps/Modules Counting (Java Upgrade)
+- Description: Latest 28-day module counts for Java upgrade; aligns natural-language asks (modules using App Mod) to Apps_* families.
+- Snippets:
+  ```kusto
+  // Latest 28-day module counts by cohort (Java upgrade)
+  let endTime = startofday(now());
+  Get28DayRollingAggregation('Java', 'upgrade', 'Apps_All')
+  | where Date < endTime and isnotempty(UserSource)
+  | summarize arg_max(Date, Count) by UserSource
+  | project UserSource, Modules = Count
+  ```
+
+  ```kusto
+  // Overall module count (sum after per-cohort latest snapshot)
+  let endTime = startofday(now());
+  Get28DayRollingAggregation('Java', 'upgrade', 'Apps_All')
+  | where Date < endTime and isnotempty(UserSource)
+  | summarize arg_max(Date, Count) by UserSource
+  | summarize TotalModules = sum(Count)
+  ```
+
+## Example Queries — Additions
+
+17) Java upgrade modules using App Mod — latest snapshot
+- Description: Answers “what’s the number of Java modules using the app mod?”. Uses Apps_All with (Language='Java', ModernizationType='upgrade'), anchors to completed days, and selects one latest snapshot per cohort.
+```kusto
+let endTime = startofday(now());
+Get28DayRollingAggregation('Java', 'upgrade', 'Apps_All')
+| where Date < endTime and isnotempty(UserSource)
+| summarize arg_max(Date, Count) by UserSource
+| project UserSource, Modules = Count
+```
+
+18) Java upgrade modules — overall total
+- Description: Overall total across cohorts. Safe to sum only after selecting the per-cohort latest snapshots.
+```kusto
+let endTime = startofday(now());
+Get28DayRollingAggregation('Java', 'upgrade', 'Apps_All')
+| where Date < endTime and isnotempty(UserSource)
+| summarize arg_max(Date, Count) by UserSource
+| summarize TotalModules = sum(Count)
+```
