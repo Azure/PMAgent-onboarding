@@ -101,7 +101,7 @@ Consolidation
   - 'java_consolidated_lines_of_code_per_project' → cross-db union of lines_of_code helpers with percentiles
 
 ### Additional conventions for internal funnels (Power BI-derived)
-- Attribution: Derive user_source as 'internal' vs 'external' by joining VsCodeInsights.fact_user_isinternal on DevDeviceId, then extend user_source via IsInternal.
+- Attribution: Derive user_source as 'internal' vs 'external' by joining VsCodeInsights.fact_user_isinternal on DevDeviceId, then extend user_source via IsInternal. 
 - Event surfaces: VSCodeExt.RawEventsVSCodeExt (VS Code extension telemetry) and Copilot.RawEventsTraces (Copilot chat) are used to stitch tool invocations and chat requests to migration flows.
 - Stable sets and anchors: Use materialize() on distinct stage sets and join back to the anchor stage (e.g., users_assessment) to constrain the population.
 - Version gating: When relevant (e.g., Java Upgrade), apply version filters (major/minor and marketplace vs snapshot builds) to ensure comparable funnels.
@@ -123,6 +123,7 @@ Consolidation
   - Do use arg_max(DataIngestTimestamp, <metric>) to select the latest daily aggregate when the source provides multiple rows per day.
   - Don’t mix UserSource vs user_source without normalization.
   - Do avoid current-day partial data by using startofday(now()) as end in helper functions.
+  - Don’t sum rolling Users_MAU/Users_MEU across Date to answer “what’s the 28-day MAU?” — treat these as 28-day snapshot metrics per Date. Select the latest completed day within your window (e.g., end = startofday(now())) and use arg_max(Date or DataIngestTimestamp) to pick that single row per cohort. If you need an overall number, sum across disjoint cohorts only after selecting one latest snapshot per cohort.
 
 ## Views (Reusable Layers)
 
@@ -334,20 +335,6 @@ Consolidation
         | distinct DevDeviceId, ExtensionVersion, user_source, type = "Confirmed as Java project";
     union users_assessment, users_precheck, users_javaproject
     | join kind=inner (users_assessment | project DevDeviceId) on DevDeviceId
-    ```
-
-- Stage matrix for visuals (bag_pack + mv-expand)
-  - Description: Convert summarized counts into a stage → {Devices, Apps, Sessions} object per row and expand for visuals.
-  - Snippet:
-    ```kusto
-    S
-    | extend data = bag_pack(
-        "Trigger Java Upgrade", bag_pack("Devices", planStartedDevices, "Apps", planStartedApps, "Sessions", planStartedSessions),
-        "Plan generated, wait for confirm", bag_pack("Devices", planGeneratedDevices, "Apps", planGeneratedApps, "Sessions", planGeneratedSessions),
-        "Plan confirmed, ready to execute", bag_pack("Devices", readyExecutionDevices, "Apps", readyExecutionApps, "Sessions", readyExecutionSessions)
-      )
-    | mv-expand stage_data = data
-    | project Stage = tostring(bag_keys(stage_data)[0]), Devices = toint(stage_data[tostring(bag_keys(stage_data)[0])].Devices)
     ```
 
 ### Additional Query Building Blocks — Helper Functions Catalog (pre-aggregation builders for deeper analysis)
@@ -1328,7 +1315,7 @@ These KQL functions build the pre-aggregated facts that many dashboards consume 
           | extend p = parse_json(Properties)
           | extend AppId = tostring(p['hashedappid'])
           | where isnotempty(AppId)
-          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VSCodeInsights').fact_user_isinternal on DevDeviceId
+          | join kind=leftouter cluster('ddtelvscode.kusto.windows.net').database('VsCodeInsights').fact_user_isinternal on DevDeviceId
           | extend user_source  = iff(tobool(IsInternal1), 'internal', 'external')
           | project Date=bin(ServerTimestamp,1d), AppId, user_source;
       let MCPmigrationAppIds_toDeprecate = cluster('ddtelai').database('Copilot').RawEventsTraces
@@ -1974,6 +1961,26 @@ union users_migration,users_copilot_request,users_tool_invoke, users_build_invok
 | join kind=inner (users_migration | project VSCodeSessionId) on VSCodeSessionId
 ```
 
+15) Java upgrade MAU — latest snapshot (do not sum across days)
+- Description: Returns the latest 28-day rolling MAU for Java upgrade per cohort. Uses an effective end time and selects one row per cohort via arg_max on Date.
+```kusto
+let endTime = startofday(now());
+Get28DayRollingAggregation('Java', 'upgrade', 'Users_MAU')
+| where Date < endTime and isnotempty(UserSource)
+| summarize arg_max(Date, Count) by UserSource
+| project UserSource, MAU = Count
+```
+
+16) Java upgrade MAU — overall total (sum only after per-cohort latest snapshot)
+- Description: Computes an overall MAU after selecting the latest snapshot per cohort. Safe only when cohorts are disjoint (e.g., internal vs external).
+```kusto
+let endTime = startofday(now());
+Get28DayRollingAggregation('Java', 'upgrade', 'Users_MAU')
+| where Date < endTime and isnotempty(UserSource)
+| summarize arg_max(Date, Count) by UserSource
+| summarize TotalMAU = sum(Count)
+```
+
 ## Reasoning Notes (only if uncertain)
 - Get28DayRollingAggregation outputs:
   - Interpretation: returns pre-aggregated (Date, UserSource, Count) for a specific language, modernizationType, and named metric. Adopted because nearly all queries treat its output like a daily rolling fact with those columns.
@@ -2136,7 +2143,7 @@ The product’s main cluster/database is appmod.westus2.kusto.windows.net/Consol
   |----------------------|----------|------------------------|
   | dcount_DevDeviceId   | long     | Distinct developer device IDs for the day. |
   | Date                 | datetime | Aggregation day. |
-  | user_source          | string   | Channel attribution. |
+  | user_source          | string   | Attribution channel. |
   | DataIngestTimestamp  | datetime | Ingestion time; select latest via arg_max. |
 
 - Column Explain:
@@ -2478,4 +2485,26 @@ The product’s main cluster/database is appmod.westus2.kusto.windows.net/Consol
   RollingAggregation
   | where Language == 'Java' and ModernizationType == 'migrate' and Name == 'Users_MEU' and LookBackWindow == '28d'
   | summarize arg_max(DataIngestTimestamp, Count) by UserSource, day = startofday(Date)
+  ```
+
+## Query Building Blocks — Addendum: MAU/MEU Counting (Correction)
+- Description: MAU/MEU are 28-day rolling snapshot metrics. Do not sum across Date to answer a “28-day MAU” question. Use an effective end time, pick the latest completed day within the window, and take one row per cohort.
+- Snippets:
+  ```kusto
+  // Latest 28-day MAU per cohort for Java upgrade
+  let endTime = startofday(now());
+  Get28DayRollingAggregation('Java', 'upgrade', 'Users_MAU')
+  | where Date < endTime and isnotempty(UserSource)
+  | summarize arg_max(Date, Count) by UserSource
+  | project UserSource, MAU = Count
+  ```
+
+  ```kusto
+  // Overall MAU (sum after selecting the latest snapshot per cohort)
+  // Safe only when cohorts are disjoint (e.g., internal vs external)
+  let endTime = startofday(now());
+  Get28DayRollingAggregation('Java', 'upgrade', 'Users_MAU')
+  | where Date < endTime and isnotempty(UserSource)
+  | summarize arg_max(Date, Count) by UserSource
+  | summarize TotalMAU = sum(Count)
   ```
