@@ -74,5 +74,23 @@ assignees: ''
 - [ ] Continue opimizing your product knowledge with PRs in future, if there is any new changes of telemetry.
   - You can manually update the knowledge file or you can use the following command to let PM Agent help you to optimize
     ```
-    #onboard help me to improve the PR [PR URL] about [some topic]. The ground truth of query should be xxx but currently it's yyy.
+    #onboard help me to improve the knowledge [PR URL] about [some topic]. The ground truth of query should be xxx but currently it's yyy.
     ```
+  - You can also add more knowledge to existing knowledge
+    ```
+    #onboard help me to add more knowledge of [PR URL] from [GitHub Comment with more raw knowledge]. This part is about xxx
+    ```
+
+- After knowledge is updated, you shall clear and re-load new knowledge
+  ```
+  clear
+  ```
+  Then
+  ```
+  #load [URL of GitHub PR]
+  ```
+
+- If you have some problem during query, you can use debug to generate an `id` can contact the PM Agent team
+  ```
+  debug
+  ```
