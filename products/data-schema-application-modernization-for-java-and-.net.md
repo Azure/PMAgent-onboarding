@@ -2,7 +2,17 @@
 
 ## 1. Product Overview
 
-The Application Modernization for Java and .NET product provides top-level metrics built from aggregated telemetry. Aggregations are derived from raw telemetry via pre-defined Kusto functions and daily rolling windows. This schema enables PMAgent to understand cohorting by UserSource, multi-stage funnels (assess, assessreport, buildfix, migrationplan, adoption, execute), and consistent time handling anchored to completed days.
+GitHub Copilot app modernization is a GitHub Copilot agent that helps upgrade projects to newer versions of .NET and migrate .NET applications to Azure quickly and confidently by guiding you through assessment, solution recommendations, code fixes, and validation - all within Visual Studio.
+This process streamlines modernization and boosts developer productivity and confidence. GitHub Copilot app modernization is an all-in-one upgrade and migration assistant that uses AI to improve developer velocity, quality, and results.
+With this assistant, you can:
+
+- Upgrade to a newer version of .NET.
+- Migrate technologies and deploy to Azure.
+- Modernize your .NET app, especially when upgrading from .NET Framework.
+- Assess your application's code, configuration, and dependencies.
+- Plan and set up the right Azure resource.
+- Fix issues and apply best practices for cloud migration.
+- Validate that your app builds and tests successfully.
 
 ## 2. Data Platform Overview
 
@@ -10,7 +20,7 @@ The Application Modernization for Java and .NET product provides top-level metri
 - **Product**:
 Application Modernization for Java and .NET
 - **Product Nick Names**: 
-**[TODO]Data_Engineer**: Fill in commonly used short names or abbreviations for the product to help PMAgent accurately recognize the target product from user conversations.
+App Mod, app-mod, Java Migrate, Java Upgrade, .Net Migrate, .Net Upgrade, Java M&M, .Net M&M, GHCP M&M, GHCP App Mod.
 - **Kusto Cluster**:
 https://appmod.westus2.kusto.windows.net/
 - **Kusto Database**:
