@@ -9,15 +9,13 @@ The Microsoft 365 Agents Toolkit (evolved from Teams Toolkit) helps developers b
 - **Data Storage**: Azure Data Explorer (ADX)
 - **Product**:
 Microsoft 365 Agents Toolkit
-- **Product Nick Names**: 
-**[TODO]Data_Engineer**: Fill in commonly used short names or abbreviations for the product to help PMAgent accurately recognize the target product from user conversations. Examples could include: "M365 Agents Toolkit", "TTK", "Teams Toolkit", "Agents Toolkit", "TeamsFx".
+- **Product Nick Names**: TeamsFx, M365 Agents Toolkit, ATK, MATK, TTK
 - **Kusto Cluster**:
 teamsfxaggregation.eastus
 - **Kusto Database**:
 vscode-ext-aggregate
-- **Access Control**:
-**[TODO] Data Engineer**: If this product’s data has high confidentiality concerns, please specify the allowed **groups/users** here. If left blank, general users will be permitted to run analyses on this product, including cross-product scenarios.  
-
+- **Access Control**: 
+  
 -----
 
 # Microsoft 365 Agents Toolkit - Kusto Query Playbook
@@ -317,7 +315,12 @@ vscode-ext-aggregate
 ## Example Queries (with explanations)
 
 - 2023 New OKR 2.2: F5 success rate; By version and project type
-  - Description: Computes F5 success rate across VSC/CLI/VS with a 3-day grace period and reclassifies certain user error codes as system. It normalizes versions, deduplicates sessions per CorrelationId, and outputs two tags: errors (IsNeverSuccess) and success rate. Adaptations: change LatestFirstDebugTime window, filter by ProjectType/AppType, or scope Version cohorts. Avoid summing success rates across time; prefer per-version comparisons.
+  - Description: Computes F5 success rate across VSC/CLI/VS with a 3-day grace period and reclassifies certain user error codes as system. It normalizes versions, deduplicates sessions per CorrelationId, and outputs two tags: errors (IsNeverSuccess) and success rate.
+  - Adaptations: change LatestFirstDebugTime window, filter by ProjectType/AppType, or scope Version cohorts. Avoid summing success rates across time; prefer per-version comparisons.
+  - The app used to calculate F5 success rate should meet these criteria:
+    - Debugging grace period: Only consider the app for F5 success rate analysis if the date between the current day and the app’s first debugging event is at least 3 days. This allows users up to 3 days to complete local debugging before the system assumes potential blocking issues.
+    - Blocked app condition: An app is considered blocked if it has never had a successful F5 run (IsNeverSuccess = true).
+      
   ```kusto
   // 2023 New OKR 2.2: F5 success rate
   // By version and project type
