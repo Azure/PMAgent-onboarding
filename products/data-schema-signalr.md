@@ -52,12 +52,12 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   - Timezone: not explicitly stated; default to UTC. Avoid using current-day data unless guarded by a completeness gate.
 
 - Freshness & Completeness Gates
-  - Pattern: for daily roll-ups, compute last fully landed day by requiring multiple sentinel regions present:
-    - EndDate computed from BillingUsage_Daily by ensuring both 'australiaeast' and 'westeurope' report on the same day.
+  - Pattern: for daily roll-ups, compute the last fully landed day via a product-approved gate. EndDate does not necessarily require two regions as a guard. Common options include:
+    - Region quorum using a small list of sentinel regions (example below uses 'australiaeast' and 'westeurope').
+    - Single sentinel region's latest landed day.
+    - A fixed lag (e.g., subtract 1 day) or ingestion-status-based signals.
   - Current-week/month often excluded by anchoring to the last landed “Current” date then using Date < startofweek(Current) or Date < startofmonth(Current).
   - Recommendation when unknown: use previous fully landed day; for weekly/monthly, use previous full week/month.
-
-- Joins & Alignment
   - Frequent keys:
     - ResourceId (often normalized with tolower(); for replicas, primary resource derived by trimming "/replicas")
     - SubscriptionId (parsed from ResourceId using parse)
@@ -142,7 +142,14 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   - Description: Safely set a time window anchored to the last fully landed day; avoid current-day partials. Provide daily/weekly/monthly pivots.
   - Snippet:
     ```kusto
-    // Effective end date using multi-region completeness gate
+
+## Query Building Blocks (Copy-paste snippets, contains snippets and description)
+
+- Time window template
+  - Description: Safely set a time window anchored to the last fully landed day; avoid current-day partials. Provide daily/weekly/monthly pivots.
+  - Snippet:
+    ```kusto
+    // Option A) Effective end date using a two-region quorum (example pattern)
     let EndDate =
         toscalar(
             BillingUsage_Daily
@@ -152,6 +159,10 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
             | top 1 by Date desc
             | project Date
         );
+    // Option B) Effective end date using a single sentinel region
+    // let EndDate = toscalar(BillingUsage_Daily | where Date > ago(10d) and Region == 'australiaeast' | top 1 by Date desc | project Date);
+    // Option C) Effective end date using a fixed lag (fallback)
+    // let EndDate = startofday(now() - 1d);
     // Daily window
     let StartDate = EndDate - 60d;
     BillingUsage_Daily
@@ -446,8 +457,8 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   - Possible interpretations: UTC, region-local, customer-local, ingestion-time, event-time.
   - Adopt UTC since queries use startofday/week/month without timezone conversions and VS telemetry field is UTC-labeled.
 - Completeness gate:
-  - Choices: rely on latest Date, subtract 1 day, use region quorum, or use ingestion metrics.
-  - Adopt region quorum (australiaeast + westeurope) shown in multiple queries as stable landing signal.
+  - Choices: rely on latest Date, subtract 1 day, use region quorum, or use ingestion metrics. EndDate does not necessarily require a two-region quorum; pick the simplest guard that is reliable for this dataset.
+  - Adopt region quorum (australiaeast + westeurope) shown in multiple queries as one stable option; single-region or fixed-lag are also acceptable when validated.
 - Revenue price mapping:
   - Choices: hardcode SKU prices from queries, abstract with placeholders, or compute from a rate table.
   - Adopt placeholders in building blocks and keep literal values in provided examples to preserve behavior, per guidance.
