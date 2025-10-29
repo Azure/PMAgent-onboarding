@@ -440,8 +440,10 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   | project SubscriptionId
   | join kind = inner (ResourceMetrics | where Date > startofday(now(), -29) and ResourceId has label
   | parse ResourceId with '/subscriptions/' SubscriptionId:string '/resourceGroups/' *
-  | summarize Revenue = sum(Revenue), PaidUnits = sumif(Quantity, SKU in ('Standard', 'Premium')), ResourceCount = dcount(ResourceId) by Date, SubscriptionId) on SubscriptionId, Date
-  | extend Temp = pack('PaidUnits', PaidUnits, 'Revenue', Revenue, 'Messages', MessageCount, 'Connections', MaxConnectionCount, 'Resources', ResourceCount)
+  | summarize MaxConnectionCount = sum(MaxConnectionCount), MessageCount = sum(SumMessageCount) by Date, SubscriptionId) on SubscriptionId
+  | join kind = inner (BillingUsage_Daily | where Date > startofday(now(), -29) and ResourceId has label
+  | extend Revenue = case(SKU=='Standard', 1.61, SKU=='Premium', 2.0, SKU=='Free', 0.0, 1.0) * Quantity
+  | summarize Revenue = sum(Revenue), PaidUnits = sumif(Quantity, SKU in ('Standard', 'Premium')), ResourceCount = dcount(ResourceId) by Date, SubscriptionId) on SubscriptionId, Date  | extend Temp = pack('PaidUnits', PaidUnits, 'Revenue', Revenue, 'Messages', MessageCount, 'Connections', MaxConnectionCount, 'Resources', ResourceCount)
   | mv-expand kind = array Temp
   | project Date, SubscriptionId, Category = tostring(Temp[0]), Value = toreal(Temp[1])
   ```
