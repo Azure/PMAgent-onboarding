@@ -126,6 +126,13 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   - Consumption:
     - Often computed as sum(Quantity) * 24 (ensure your Quantity semantics match).
 
+
+  - Month-based counting:
+    - Group by Month = startofmonth(Date); exclude the current month via Date < startofmonth(now()).
+    - Use dcount(ResourceId, 4) for resource-level counts (and dcount(SubscriptionId, 4) / dcount(CloudCustomerGuid, 4) for subscription/customer counts).
+    - Do not aggregate distinct counts across months; treat each month independently. For multi-month totals, recompute distinct on the combined set.
+  - Customer cohort segmentation:
+    - External vs Internal: join SubscriptionMappings and filter CustomerType == 'External', and also exclude SubscriptionId in SignalRTeamInternalSubscriptionIds for safety.
 - Business definitions (from queries)
   - “AI cohort” customer: resources whose ResourceId matches ai/gpt/ml/cognitive/openai/chatgpt patterns.
   - “Top subscriptions”: from Cached_TopSubscriptions_Snapshot; “IsNew” and “IsRetained” based on StartDate/EndDate relative to recent days.
@@ -281,6 +288,56 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
     | summarize RequestCount = sum(RequestCount) by Date, ResourceId, SubscriptionId, Feature, Category
     ```
 
+
+- Monthly counts template
+  - Description: Count distinct resources/subscriptions/customers on completed calendar months. Anchor EndMonth = startofmonth(now()) to exclude the current (partial) month; choose StartMonth = startofmonth(EndMonth, -N) for the last N full months. Use service scoping and customer cohort filters via SubscriptionMappings. Prefer approximate dcount(., 4) for stability at large scale.
+  - Snippet:
+    ```kusto
+    // Monthly resource counts (SignalR) — exclude current month and filter External customers
+    let EndMonth   = startofmonth(now());                // effective end; current month excluded
+    let StartMonth = startofmonth(EndMonth, -<MonthsBack>); // e.g., -6 for last 6 full months
+    let ExternalSubs = SubscriptionMappings
+        | where CustomerType == 'External'
+        | where SubscriptionId !in (SignalRTeamInternalSubscriptionIds)
+        | project SubscriptionId;
+
+    BillingUsage_Daily
+    | where Date >= StartMonth and Date < EndMonth
+    | where ResourceId has '/microsoft.signalrservice/signalr'   // case-insensitive service scope
+    | project Date, ResourceId, SubscriptionId                    // prefer native column; parse if missing
+    // If SubscriptionId is missing in your source, uncomment the parse line:
+    // | parse ResourceId with "/subscriptions/" SubscriptionId:string "/resourceGroups/" *
+    | join kind=inner (ExternalSubs) on SubscriptionId
+    | summarize ResourceCount = dcount(ResourceId, 4) by Month = startofmonth(Date)
+    | order by Month desc
+    ```
+    ```kusto
+    // Alternative: Web PubSub monthly resource counts (External)
+    BillingUsage_Daily
+    | where Date >= StartMonth and Date < EndMonth
+    | where ResourceId has '/microsoft.signalrservice/webpubsub'
+    | join kind=inner (ExternalSubs) on SubscriptionId
+    | summarize ResourceCount = dcount(ResourceId, 4) by Month = startofmonth(Date)
+    | order by Month desc
+    ```
+  - Notes:
+    - Do not sum distinct resource counts across months; each month’s dcount is scoped to that month.
+    - For subscription/customer monthly counts, replace the entity in dcount() accordingly (SubscriptionId, CloudCustomerGuid).
+
+- Customer cohort templates
+  - Description: Build reusable allowlists for customer cohorts (External-only, segments) and use inner joins to restrict analyses.
+  - Snippet:
+    ```kusto
+    // External-only cohort with safety exclusion of internal team subscriptions
+    let ExternalSubs = SubscriptionMappings
+        | where CustomerType == 'External'
+        | where SubscriptionId !in (SignalRTeamInternalSubscriptionIds)
+        | project SubscriptionId;
+
+    // Apply cohort via inner join on SubscriptionId
+    <FactTable>
+    | join kind=inner (ExternalSubs) on SubscriptionId
+    ```
 ## Example Queries (with explanations)
 
 - OKR income by service (daily, with gating and mapping)
