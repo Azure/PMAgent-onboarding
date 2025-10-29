@@ -49,16 +49,14 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
     - Weekly windows: startofweek(now(), -8..-12); exclude the current week via Date < startofweek(Current)
     - Monthly windows: startofmonth(now(), -12..-16); often exclude the current month via Date < startofmonth(Current)
     - Cohort/rolling: 7d/28d rolling windows; 28-day “DoM” rolling windows for AI cohorts
-  - Timezone: not explicitly stated; default to UTC. Avoid using current-day data unless guarded by a completeness gate.
+  - Timezone: not explicitly stated; default to UTC. Avoid using current-day data unless ingestion completeness is validated; EndDate uses the latest available Date without a completeness gate.
 
 - Freshness & Completeness Gates
-  - Pattern: for daily roll-ups, compute last fully landed day by requiring multiple sentinel regions present:
-    - EndDate computed from BillingUsage_Daily by ensuring both 'australiaeast' and 'westeurope' report on the same day.
-  - Current-week/month often excluded by anchoring to the last landed “Current” date then using Date < startofweek(Current) or Date < startofmonth(Current).
-  - Recommendation when unknown: use previous fully landed day; for weekly/monthly, use previous full week/month.
+  - EndDate: No completeness gate is required. Use the latest available Date from the primary fact table (e.g., toscalar(<FactTable> | top 1 by Date desc | project Date)).
+  - Current-week/month are often excluded by anchoring to the latest Date (Current) and using Date < startofweek(Current) or Date < startofmonth(Current) to avoid partial periods.
+  - Recommendation: When unsure about ingestion latency, consider excluding the current day in ad-hoc analyses, but do not apply multi-region or quorum-based EndDate gating.
 
 - Joins & Alignment
-  - Frequent keys:
     - ResourceId (often normalized with tolower(); for replicas, primary resource derived by trimming "/replicas")
     - SubscriptionId (parsed from ResourceId using parse)
     - Date (or derived Week/Month)
@@ -139,27 +137,37 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
 ## Query Building Blocks (Copy-paste snippets, contains snippets and description)
 
 - Time window template
-  - Description: Safely set a time window anchored to the last fully landed day; avoid current-day partials. Provide daily/weekly/monthly pivots.
+  - Description: Set a time window using the latest available Date without applying a completeness gate. Provide daily/weekly/monthly pivots, and optionally exclude the current partial week/month when needed.
   - Snippet:
     ```kusto
-    // Effective end date using multi-region completeness gate
-    let EndDate =
-        toscalar(
-            BillingUsage_Daily
-            | where Date > ago(10d) and Region in ('australiaeast', 'westeurope')
-            | summarize Regions = dcount(Region) by Date
-            | where Regions >= 2
-            | top 1 by Date desc
-            | project Date
-        );
+    // EndDate from the latest available day (no completeness gate)
+    let EndDate = toscalar(BillingUsage_Daily | top 1 by Date desc | project Date);
     // Daily window
     let StartDate = EndDate - 60d;
     BillingUsage_Daily
     | where Date > StartDate and Date <= EndDate
     ```
     ```kusto
-    // Anchor to last landed Current date for week/month windows
+    // Anchor to latest Date for week/month windows
     let Current = toscalar(<FactTable> | top 1 by Date desc | project Date);
+    // Weekly (optionally exclude current week)
+    <FactTable>
+    | where Date >= datetime_add('week', -9, startofweek(Current)) and Date < startofweek(Current)
+    // Monthly (optionally exclude current month)
+    <FactTable>
+    | where Date >= datetime_add('month', -12, startofmonth(Current)) and Date < startofmonth(Current)
+    ```
+
+- Join template
+  - Description: Standard alignment of usage with connections and customer mapping; normalize keys and timestamps; prefer leftouter for enrichment.
+  - Snippet:
+    ```kusto
+    let U = BillingUsage_Daily
+        | where Date between (StartDate .. EndDate)
+        | extend ResourceKey = tolower(ResourceId);
+    let C = MaxConnectionCount_Daily
+        | where Date between (StartDate .. EndDate)
+        | project Date, ResourceKey = tolower(Role);
     // Weekly (exclude current week)
     <FactTable>
     | where Date >= datetime_add('week', -9, startofweek(Current)) and Date < startofweek(Current)
@@ -432,9 +440,6 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   | project SubscriptionId
   | join kind = inner (ResourceMetrics | where Date > startofday(now(), -29) and ResourceId has label
   | parse ResourceId with '/subscriptions/' SubscriptionId:string '/resourceGroups/' *
-  | summarize MaxConnectionCount = sum(MaxConnectionCount), MessageCount = sum(SumMessageCount) by Date, SubscriptionId) on SubscriptionId
-  | join kind = inner (BillingUsage_Daily | where Date > startofday(now(), -29) and ResourceId has label
-  | extend Revenue = case(SKU=='Standard', 1.61, SKU=='Premium', 2.0, SKU=='Free', 0.0, 1.0) * Quantity
   | summarize Revenue = sum(Revenue), PaidUnits = sumif(Quantity, SKU in ('Standard', 'Premium')), ResourceCount = dcount(ResourceId) by Date, SubscriptionId) on SubscriptionId, Date
   | extend Temp = pack('PaidUnits', PaidUnits, 'Revenue', Revenue, 'Messages', MessageCount, 'Connections', MaxConnectionCount, 'Resources', ResourceCount)
   | mv-expand kind = array Temp
@@ -446,12 +451,13 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   - Possible interpretations: UTC, region-local, customer-local, ingestion-time, event-time.
   - Adopt UTC since queries use startofday/week/month without timezone conversions and VS telemetry field is UTC-labeled.
 - Completeness gate:
-  - Choices: rely on latest Date, subtract 1 day, use region quorum, or use ingestion metrics.
-  - Adopt region quorum (australiaeast + westeurope) shown in multiple queries as stable landing signal.
+  - EndDate does not require a completeness gate in this product. Prefer using the latest available Date directly. If you suspect partial ingestion for the current day, simply exclude today without applying regional quorum logic.
 - Revenue price mapping:
   - Choices: hardcode SKU prices from queries, abstract with placeholders, or compute from a rate table.
   - Adopt placeholders in building blocks and keep literal values in provided examples to preserve behavior, per guidance.
 - Uniques precision:
+  - Choices: exact count distinct (resource-heavy), dcount default, dcount with precision (3/4).
+  - Adopt dcount(., 3|4) as used in product to balance stability and cost.
   - Choices: exact count distinct (resource-heavy), dcount default, dcount with precision (3/4).
   - Adopt dcount(., 3|4) as used in product to balance stability and cost.
 - AI cohort detection:
