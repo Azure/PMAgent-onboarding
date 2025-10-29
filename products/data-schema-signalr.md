@@ -52,10 +52,8 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   - Timezone: not explicitly stated; default to UTC. Avoid using current-day data unless guarded by a completeness gate.
 
 - Freshness & Completeness Gates
-  - Pattern: compute the last fully landed day using the most reliable completeness signal for your environment; a two-region quorum is optional, not required.
-    - Option A (multi-region quorum): use a sentinel region list and gate when all are present on the same day.
-    - Option B (single-region anchor): choose a single reliable region (e.g., 'australiaeast') and use its last reported day.
-    - Option C (table-landed day): use the latest Date in BillingUsage_Daily, optionally excluding today to avoid partial data.
+  - Pattern: for daily roll-ups, compute last fully landed day by requiring multiple sentinel regions present:
+    - EndDate computed from BillingUsage_Daily by ensuring both 'australiaeast' and 'westeurope' report on the same day.
   - Current-week/month often excluded by anchoring to the last landed “Current” date then using Date < startofweek(Current) or Date < startofmonth(Current).
   - Recommendation when unknown: use previous fully landed day; for weekly/monthly, use previous full week/month.
 
@@ -351,7 +349,7 @@ SignalR and Web PubSub are Azure managed services for building real-time web app
   ```
 
 - Resource totals (daily, HasConnection and completeness gate)
-  - Description: Counts distinct resources per day with SKU/Region split and a HasConnection flag by joining ResourceMetrics (MaxConnectionCount > 0). Uses an EndDate gate (multi-region shown here; optional). Use for daily active resource totals by SKU and activity; adapt region list or SKU filter as needed.
+  - Description: Counts distinct resources per day with SKU/Region split and a HasConnection flag by joining ResourceMetrics (MaxConnectionCount > 0). Uses a multi-region EndDate gate. Use for daily active resource totals by SKU and activity; adapt region list or SKU filter as needed.
   ```kusto
   let EndDate = toscalar(BillingUsage_Daily | where Date > ago(10d) and Region in ('australiaeast', 'westeurope') 
       | summarize counter = dcount(Region) by Date | where counter >= 2 | top 1 by Date desc | project Date);
