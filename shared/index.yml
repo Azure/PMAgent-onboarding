@@ -7,7 +7,7 @@
     - socketio
     - realtime
   knowledge_path:
-    - "./data-schema-signalr-and-web-pubsub.md"
+    - "./data-schema-signalr.md"
   roles:
     - signalr.admin
 - name: GitHub Copilot Extension for Microsoft 365 Agents Toolkit
