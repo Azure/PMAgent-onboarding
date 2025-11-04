@@ -7,13 +7,10 @@ The Microsoft 365 Agents Toolkit (evolved from Teams Toolkit) helps developers b
 ## 2. Data Platform Overview
 
 - **Data Storage**: Azure Data Explorer (ADX)
-- **Product**:
-Microsoft 365 Agents Toolkit
-- **Product Nick Names**: TeamsFx, M365 Agents Toolkit, ATK, MATK, TTK
-- **Kusto Cluster**:
-teamsfxaggregation.eastus
-- **Kusto Database**:
-vscode-ext-aggregate
+- **Product**: Microsoft 365 Agents Toolkit
+- **Product Nick Names**: TeamsFx, M365 Agents Toolkit, ATK, MATK, TTK, Teams Toolkit
+- **Kusto Cluster**: teamsfxaggregation.eastus
+- **Kusto Database**: vscode-ext-aggregate
 - **Access Control**: 
   
 -----
