@@ -64,12 +64,14 @@
     - "./data-schema-acat.md"
 - name: Microsoft 365 Agents Toolkit
   id: atk_topic
-  description: "Measure and report TeamsFx F5 (local debug) success rate across VS Code, CLI, and Visual Studio, sliced by version and project type; normalize session timelines, classify errors, and compute first success to determine if a project is blocked or successful."
+  description: "The Microsoft 365 Agents Toolkit (evolved from Teams Toolkit) helps developers build and deploy agents and apps across Microsoft 365 platforms including Microsoft 365 Copilot, Microsoft Teams, and Microsoft 365. It provides integrated identity, access to cloud storage, Microsoft Graph data, and Azure services with a "zero-configuration" approach, significantly simplifying the development lifecycle."
   tags:
     - teamsfx
     - atk
     - matk
     - m365 agents toolkit
     - agents toolkit
+    - ttk
+    - teams toolkit
   knowledge_path:
     - "./data-schema-microsoft-365-agents-toolkit.md"
